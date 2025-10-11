@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 import { buildCampusClause } from "@/lib/schema";
-import { wrapCache } from "@/lib/cache";
+import { wrapCache, getCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -43,12 +43,17 @@ export async function GET(request, context = { params: {} }) {
     const month = searchParams.get("month");
     const showAllOpen = searchParams.get("showAllOpen") === "true";
 
+    console.log("[api/tickets][GET] query params:", {
+      campus, status, schoolYear, month, showAllOpen,
+    });
+
     const key = buildKey({ campus, status, schoolYear, month, showAllOpen });
+    const hadCached = Boolean(getCache(key));
 
     // More generous microcache for openAll to cut DB load drastically
     const ttl = status === "0" && showAllOpen ? 25_000 : 10_000;
 
-    const tickets = await wrapCache(key, ttl, async () => {
+    const resultRows = await wrapCache(key, ttl, async () => {
       const pool = await getConnection();
 
       let query = `
@@ -87,8 +92,10 @@ export async function GET(request, context = { params: {} }) {
         qParams.push(status);
       }
 
-      if (showAllOpen && status === "0") {
-        // no date filter
+      const isOpenAll = showAllOpen && status === "0";
+
+      if (isOpenAll) {
+        console.log("[api/tickets][GET] openAll=true => skipping date filter");
       } else if (month) {
         const range = monthRange(month);
         if (range) {
@@ -105,20 +112,24 @@ export async function GET(request, context = { params: {} }) {
         query += " AND MONTH(f.fecha) = MONTH(NOW()) AND YEAR(f.fecha) = YEAR(NOW())";
       }
 
-      const isOpenAll = showAllOpen && status === "0";
       const rowLimit = isOpenAll ? 150 : 400;
       query += ` ORDER BY f.fecha DESC LIMIT ${rowLimit}`;
 
+      console.log("[api/tickets][GET] SQL:", query.replace(/\s+/g, " ").trim());
+      console.log("[api/tickets][GET] Params:", qParams);
+
       const [rows] = await pool.execute(query, qParams);
+      console.log("[api/tickets][GET] tickets rows:", rows?.length || 0);
 
       // Avoid followups in heavy openAll mode
       if (!isOpenAll && rows.length > 0) {
         const folios = rows.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
-        const [fu] = await pool.execute(
-          `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`,
-          folios
-        );
+        const fuSql = `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`;
+        console.log("[api/tickets][GET] Followups SQL:", fuSql, "count folios:", folios.length);
+        const [fu] = await pool.execute(fuSql, folios);
+        console.log("[api/tickets][GET] followups rows:", fu?.length || 0);
+
         const map = new Map();
         for (const r of fu) {
           const list = map.get(r.ticket_id) || [];
@@ -129,12 +140,17 @@ export async function GET(request, context = { params: {} }) {
           const folio = t.folio_number || String(t.id).padStart(5, "0");
           t.followups = map.get(folio) || [];
         }
+      } else if (isOpenAll) {
+        console.log("[api/tickets][GET] Skipping followups for openAll view to reduce load.");
       }
 
       return rows;
     });
 
-    return NextResponse.json(tickets);
+    const res = NextResponse.json(resultRows);
+    res.headers.set("x-microcache", hadCached ? "HIT" : "MISS");
+    res.headers.set("x-tickets-count", String(Array.isArray(resultRows) ? resultRows.length : 0));
+    return res;
   } catch (error) {
     console.error("[api/tickets][GET] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -164,6 +180,18 @@ export async function POST(request, context = { params: {} }) {
 
     const pool = await getConnection();
 
+    console.log("[api/tickets][POST] creating ticket with:", {
+      campus,
+      contact_method,
+      is_complaint,
+      parent_name_len: parent_name?.length || 0,
+      student_name_len: student_name?.length || 0,
+      target_department,
+      original_department,
+      has_appointment: Boolean(appointment_date),
+      status,
+    });
+
     const [result] = await pool.execute(
       `INSERT INTO fichas_atencion (
         campus, contact_method, is_complaint, parent_name, student_name,
@@ -182,7 +210,7 @@ export async function POST(request, context = { params: {} }) {
         reason,
         resolution,
         resolution,
-        appointment_date,
+        appointment_date || null,
         target_department,
         department_email,
         created_by,
@@ -193,6 +221,7 @@ export async function POST(request, context = { params: {} }) {
 
     const ticketId = result.insertId;
     const folioNumber = String(ticketId).padStart(5, "0");
+    console.log("[api/tickets][POST] inserted ticketId:", ticketId, "folio:", folioNumber);
 
     if (
       target_department &&
@@ -216,10 +245,11 @@ export async function POST(request, context = { params: {} }) {
           resolution,
           target_department,
           department_email,
-          appointment_date,
+          appointment_date || null,
           status || "0",
         ]
       );
+      console.log("[api/tickets][POST] inserted initial seguimiento for folio:", folioNumber);
     }
 
     return NextResponse.json({

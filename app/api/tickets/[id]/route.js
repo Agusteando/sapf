@@ -22,6 +22,7 @@ export async function GET(request, context = { params: {} }) {
       "SELECT * FROM seguimiento WHERE ticket_id = ? ORDER BY fecha ASC",
       [tickets[0].folio_number]
     );
+    console.log("[api/tickets/:id][GET] followups count:", followups?.length || 0);
 
     tickets[0].followups = followups;
 
@@ -37,7 +38,7 @@ export async function PUT(request, context = { params: {} }) {
   try {
     const id = params.id;
     const { resolution, status, target_department } = await request.json();
-    console.log("[api/tickets/:id][PUT] id:", id, { status, target_department });
+    console.log("[api/tickets/:id][PUT] id:", id, { status, target_department, has_resolution: Boolean(resolution) });
 
     const connection = await getConnection();
 
@@ -77,6 +78,9 @@ export async function PUT(request, context = { params: {} }) {
           status,
         ]
       );
+      console.log("[api/tickets/:id][PUT] appended seguimiento for folio:", folioNumber);
+    } else {
+      console.log("[api/tickets/:id][PUT] no target_department => no seguimiento appended");
     }
 
     return NextResponse.json({ success: true });

@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 import { buildCampusClause } from "@/lib/schema";
-import { wrapCache } from "@/lib/cache";
+import { wrapCache, getCache } from "@/lib/cache";
 import { computeWeakETagFromString } from "@/lib/etag";
 
 export const runtime = "nodejs";
@@ -53,11 +53,16 @@ export async function GET(request, context = { params: {} }) {
     const schoolYear = searchParams.get("schoolYear");
     const month = searchParams.get("month");
     const showAllOpen = searchParams.get("showAllOpen") === "true";
+    const includeFollowups = searchParams.get("includeFollowups") === "true";
     const ifNoneMatch = request.headers.get("if-none-match") || "";
+
+    console.log("[api/dashboard][GET] params:", {
+      campus, status, schoolYear, month, showAllOpen, includeFollowups
+    });
 
     // Server-side throttle: if identical query from same client repeats within the below window, short-circuit.
     const ip = getClientIp(request);
-    const throttleKey = `${ip}|campus=${campus || ""}|status=${status || ""}|sy=${schoolYear || ""}|m=${month || ""}|open=${showAllOpen ? "1" : "0"}`;
+    const throttleKey = `${ip}|campus=${campus || ""}|status=${status || ""}|sy=${schoolYear || ""}|m=${month || ""}|open=${showAllOpen ? "1" : "0"}|fu=${includeFollowups ? "1" : "0"}`;
     const last = throttleMap.get(throttleKey)?.ts || 0;
     const nowTs = Date.now();
     const isOpenAll = showAllOpen && status === "0";
@@ -72,8 +77,9 @@ export async function GET(request, context = { params: {} }) {
     throttleMap.set(throttleKey, { ts: nowTs });
 
     const key = cacheKey({ campus, status, schoolYear, month, showAllOpen });
+    const hadCached = Boolean(getCache(key));
 
-    // Tuned TTLs to reduce DB load further; openAll view is most spammy => longer TTL.
+    // Tuned TTLs; openAll view is most spammy => longer TTL.
     const ttlMs = isOpenAll ? 30_000 : 8_000;
 
     const result = await wrapCache(key, ttlMs, async () => {
@@ -88,6 +94,7 @@ export async function GET(request, context = { params: {} }) {
       const dateParams = [];
       if (isOpenAll) {
         // explicitly skip date filter for open-all to let operators scan all open tickets
+        console.log("[api/dashboard] openAll => skipping dateClause");
       } else if (month) {
         const r = monthRange(month);
         if (r) {
@@ -113,9 +120,8 @@ export async function GET(request, context = { params: {} }) {
 
       // Dynamically limit rows and optionally skip followups to avoid hammering DB.
       const rowLimit = isOpenAll ? 150 : 400;
-      const shouldFetchFollowups = !isOpenAll; // skip followups for openAll to reduce load
+      const shouldFetchFollowups = includeFollowups ? true : !isOpenAll; // explicit override if requested
 
-      // Narrow SELECT list to required fields only
       const ticketsSql = `
         SELECT 
           f.id,
@@ -143,7 +149,6 @@ export async function GET(request, context = { params: {} }) {
       `;
       const tParams = [...campusClause.params, ...dateParams, ...statusParams];
 
-      // KPI query (use same filters but no LIMIT)
       const kpiSql = `
         SELECT
           COUNT(*) AS total,
@@ -156,19 +161,28 @@ export async function GET(request, context = { params: {} }) {
       `;
       const kParams = [...campusClause.params, ...dateParams];
 
+      console.log("[api/dashboard] tickets SQL:", ticketsSql.replace(/\s+/g, " ").trim());
+      console.log("[api/dashboard] tickets params:", tParams);
+      console.log("[api/dashboard] kpi SQL:", kpiSql.replace(/\s+/g, " ").trim());
+      console.log("[api/dashboard] kpi params:", kParams);
+      console.log("[api/dashboard] shouldFetchFollowups:", shouldFetchFollowups, "rowLimit:", rowLimit);
+
       const [[tickets], [kpi]] = await Promise.all([
         pool.execute(ticketsSql, tParams),
         pool.execute(kpiSql, kParams),
       ]);
 
+      console.log("[api/dashboard] tickets count:", tickets?.length || 0);
+
       // Batch followups only when explicitly allowed
+      let followupsCount = 0;
       if (shouldFetchFollowups && tickets.length > 0) {
         const folios = tickets.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
-        const [rows] = await pool.execute(
-          `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`,
-          folios
-        );
+        const fuSql = `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`;
+        console.log("[api/dashboard] followups SQL:", fuSql, "folios:", folios.length);
+        const [rows] = await pool.execute(fuSql, folios);
+        followupsCount = rows?.length || 0;
         const byTicket = new Map();
         for (const row of rows) {
           const list = byTicket.get(row.ticket_id) || [];
@@ -179,6 +193,8 @@ export async function GET(request, context = { params: {} }) {
           const folio = t.folio_number || String(t.id).padStart(5, "0");
           t.followups = byTicket.get(folio) || [];
         }
+      } else if (!shouldFetchFollowups) {
+        console.log("[api/dashboard] followups skipped.");
       }
 
       const k = kpi?.[0] || {
@@ -189,17 +205,20 @@ export async function GET(request, context = { params: {} }) {
         avg_resolucion_horas: null,
       };
 
-      return { tickets, kpi: k };
+      console.log("[api/dashboard] KPI:", k, "followupsCount:", followupsCount);
+
+      return { tickets, kpi: k, _debug: { followupsCount } };
     });
 
     const jsonStr = JSON.stringify(result);
     const etag = computeWeakETagFromString(jsonStr);
 
-    // If client already has same payload, short-circuit to 304 w/o DB or JSON serialization.
+    // If client already has same payload, short-circuit to 304.
     if (ifNoneMatch && ifNoneMatch === etag) {
       const res304 = new NextResponse(null, { status: 304 });
       res304.headers.set("ETag", etag);
       res304.headers.set("x-cache", "dashboard-304");
+      res304.headers.set("x-microcache", hadCached ? "HIT" : "MISS");
       res304.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=30");
       return res304;
     }
@@ -209,7 +228,8 @@ export async function GET(request, context = { params: {} }) {
         "Content-Type": "application/json; charset=utf-8",
         "ETag": etag,
         "x-cache": "dashboard",
-        // Allow client/browser to keep it for a bit; server still guards with memory cache TTLs.
+        "x-microcache": hadCached ? "HIT" : "MISS",
+        "x-followups-count": String(result?._debug?.followupsCount ?? 0),
         "Cache-Control": "private, max-age=10, stale-while-revalidate=30",
       },
     });

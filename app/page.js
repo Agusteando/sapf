@@ -39,9 +39,11 @@ export default function ParentAttentionSystem() {
     reason: "",
     resolution: "",
     appointmentDate: new Date().toISOString().slice(0, 16),
+    noAppointment: false,
     targetDepartment: "",
     status: "0",
     selectedDepartment: "",
+    existingOpenTicketId: null,
   });
 
   // Client-side response cache for dashboard data keyed by filtersKey to minimize server requests
@@ -59,7 +61,8 @@ export default function ParentAttentionSystem() {
     { value: "DM", label: "Desarrollo Metepec" },
   ];
 
-  const departmentOptions = [
+  // Fallback department options only if no server mapping exists for campus
+  const fallbackDepartmentOptions = [
     "Administración",
     "Dirección",
     "Control Escolar",
@@ -120,11 +123,35 @@ export default function ParentAttentionSystem() {
     setLoading(false);
   };
 
+  function chooseDefaultOriginDepartment(grouped) {
+    const names = Object.keys(grouped);
+    if (names.length === 0) return "";
+    const priority = [
+      "Control Escolar",
+      "Dirección",
+      "Administración",
+      "Psicología",
+      "Pedagogía Español",
+      "Pedagogía Inglés",
+    ];
+    for (const p of priority) {
+      if (names.includes(p)) return p;
+    }
+    // fallback to first alpha
+    return names.sort((a, b) => a.localeCompare(b, "es"))[0];
+  }
+
   const fetchDepartments = async () => {
     try {
       const response = await fetch(`/api/departments/${selectedCampus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
       if (!response.ok) {
         console.warn("[app/page] departments not ok:", response.status);
+        setDepartments({});
+        // When no server mapping, ensure selectedDepartment falls back to first fallback option
+        setFormData((prev) => ({
+          ...prev,
+          selectedDepartment: prev.selectedDepartment || fallbackDepartmentOptions[0],
+        }));
         return;
       }
       const data = await response.json();
@@ -134,8 +161,20 @@ export default function ParentAttentionSystem() {
         return acc;
       }, {});
       setDepartments(grouped);
+
+      // Auto-select origin department based on deptos map if not set or outdated
+      setFormData((prev) => {
+        const current = prev.selectedDepartment;
+        const available = Object.keys(grouped);
+        let next = current;
+        if (!current || !available.includes(current)) {
+          next = chooseDefaultOriginDepartment(grouped) || fallbackDepartmentOptions[0];
+        }
+        return { ...prev, selectedDepartment: next };
+      });
     } catch (error) {
       console.error("Error fetching departments:", error);
+      setDepartments({});
     }
   };
 
@@ -171,6 +210,33 @@ export default function ParentAttentionSystem() {
       const departmentEmail =
         departments[formData.selectedDepartment]?.[0]?.email || "";
 
+      // If an existing open ticket was detected and user opted to append, use PUT to add seguimiento
+      if (formData.existingOpenTicketId && formData.appendToExisting) {
+        const response = await fetch(`/api/tickets/${formData.existingOpenTicketId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({
+            resolution: formData.resolution,
+            status: formData.status,
+            target_department: formData.targetDepartment,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result?.success) {
+          alert("No se pudo agregar el seguimiento al folio existente.");
+          return;
+        }
+        alert(`Seguimiento agregado al folio ${String(formData.existingOpenTicketId).padStart(5, "0")}.`);
+        setFormData((prev) => ({
+          ...prev,
+          resolution: "",
+          targetDepartment: "",
+          appendToExisting: false,
+          existingOpenTicketId: null,
+        }));
+        return;
+      }
+
       const response = await fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
@@ -184,7 +250,7 @@ export default function ParentAttentionSystem() {
           parent_email: formData.parentEmail,
           reason: formData.reason,
           resolution: formData.resolution,
-          appointment_date: formData.appointmentDate,
+          appointment_date: formData.noAppointment ? null : formData.appointmentDate,
           target_department: formData.targetDepartment,
           department_email: departmentEmail,
           created_by: "Current User",
@@ -194,7 +260,7 @@ export default function ParentAttentionSystem() {
       });
 
       const result = await response.json();
-      if (result.success) {
+      if (response.ok && result.success) {
         alert(`Ficha generada exitosamente. Folio: ${result.folioNumber}`);
         setFormData({
           contactMethod: "email",
@@ -206,12 +272,15 @@ export default function ParentAttentionSystem() {
           reason: "",
           resolution: "",
           appointmentDate: new Date().toISOString().slice(0, 16),
+          noAppointment: false,
           targetDepartment: "",
           status: "0",
-          selectedDepartment: "",
+          selectedDepartment: chooseDefaultOriginDepartment(departments) || "",
+          existingOpenTicketId: null,
+          appendToExisting: false,
         });
       } else {
-        alert("No se pudo generar la ficha");
+        alert(result?.error || "No se pudo generar la ficha");
       }
     } catch (error) {
       console.error("Error submitting ticket:", error);
@@ -242,6 +311,24 @@ export default function ParentAttentionSystem() {
   const exportToExcel = () => {
     window.open(`/api/export-excel?campus=${selectedCampus}&status=`, "_blank");
   };
+
+  // Label showing who is in charge for "canalizar"
+  function holderDisplayFor(deptName) {
+    const entry = departments?.[deptName]?.[0] || {};
+    const cand =
+      entry.responsable_name ||
+      entry.display_name ||
+      entry.in_charge_name ||
+      entry.incharge_name ||
+      entry.owner_name ||
+      entry.supervisor_name ||
+      entry.name ||
+      entry.full_name ||
+      entry.supervisor_email ||
+      entry.email ||
+      "";
+    return String(cand);
+  }
 
   const StudentSearch = () => {
     const [searchTerm, setSearchTerm] = useState("");
@@ -282,6 +369,13 @@ export default function ParentAttentionSystem() {
 
       const dup = await checkDuplicate(parentName);
       setDuplicate(dup);
+      // Propagate duplicate to parent form state for submit logic
+      setFormData((prev) => ({
+        ...prev,
+        existingOpenTicketId: dup?.dup === 1 ? dup?.id : null,
+        appendToExisting: dup?.dup === 1 ? true : prev.appendToExisting,
+      }));
+
       setResults([]);
       setSearchTerm("");
     };
@@ -337,7 +431,7 @@ export default function ParentAttentionSystem() {
             <AlertCircle className="w-5 h-5 text-red-600" />
             <span className="text-red-700">
               Ya existe un folio abierto para {formData.parentName}. Folio:{" "}
-              {String(duplicate.id).padStart(5, "0")}
+              {String(duplicate.id).padStart(5, "0")} — se agregará seguimiento por defecto.
             </span>
           </div>
         )}
@@ -450,6 +544,20 @@ export default function ParentAttentionSystem() {
   };
 
   const TicketForm = () => {
+    const [appendToExisting, setAppendToExisting] = useState(false);
+
+    // Sync appendToExisting with duplicate detection on formData
+    useEffect(() => {
+      setAppendToExisting(Boolean(formData.existingOpenTicketId));
+    }, [formData.existingOpenTicketId]);
+
+    // Derive available origin departments: prefer server mapping for campus
+    const originDepartments = useMemo(() => {
+      const mapped = Object.keys(departments || {});
+      if (mapped.length > 0) return mapped;
+      return fallbackDepartmentOptions;
+    }, [departments]);
+
     return (
       <div className="bg-white p-6 rounded-lg shadow-lg">
         <h2 className="text-2xl font-bold text-orange-500 mb-6">
@@ -457,6 +565,27 @@ export default function ParentAttentionSystem() {
         </h2>
 
         <StudentSearch />
+
+        {formData.existingOpenTicketId && (
+          <div className="mb-4 p-4 rounded-lg border-2 border-amber-300 bg-amber-50 text-amber-900">
+            Se detectó una ficha abierta para este padre/madre. Folio:{" "}
+            <strong>{String(formData.existingOpenTicketId).padStart(5, "0")}</strong>. Puedes
+            agregar un seguimiento a ese folio o crear una nueva ficha.
+            <div className="mt-2 flex items-center gap-2">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={appendToExisting}
+                  onChange={(e) => {
+                    setAppendToExisting(e.target.checked);
+                    setFormData((prev) => ({ ...prev, appendToExisting: e.target.checked }));
+                  }}
+                />
+                Agregar seguimiento al folio existente
+              </label>
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="grid gap-3">
@@ -534,22 +663,43 @@ export default function ParentAttentionSystem() {
                 setFormData((p) => ({ ...p, contactMethod: e.target.value }))
               }
             >
-              <option value="email">Email</option>
-              <option value="phone">Teléfono</option>
-              <option value="message">Mensaje</option>
-              <option value="video">Videollamada</option>
+              <option value="email">Correo</option>
+              <option value="llamada">Llamada telefónica</option>
+              <option value="mensaje">Mensaje</option>
+              <option value="videollamada">Videollamada</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="teams">Microsoft Teams</option>
+              <option value="zoom">Zoom</option>
+              <option value="presencial">Presencial</option>
             </select>
           </div>
-          <div className="grid gap-3">
+          <div className="grid gap-1">
             <label className="text-sm font-semibold text-gray-700">Cita</label>
-            <input
-              type="datetime-local"
-              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              value={formData.appointmentDate}
-              onChange={(e) =>
-                setFormData((p) => ({ ...p, appointmentDate: e.target.value }))
-              }
-            />
+            <div className="flex items-center gap-3">
+              <input
+                type="datetime-local"
+                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                value={formData.appointmentDate}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, appointmentDate: e.target.value }))
+                }
+                disabled={formData.noAppointment}
+              />
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={formData.noAppointment}
+                  onChange={(e) =>
+                    setFormData((p) => ({
+                      ...p,
+                      noAppointment: e.target.checked,
+                      appointmentDate: e.target.checked ? "" : (p.appointmentDate || new Date().toISOString().slice(0, 16)),
+                    }))
+                  }
+                />
+                Sin cita
+              </label>
+            </div>
           </div>
           <div className="grid gap-3">
             <label className="text-sm font-semibold text-gray-700">Departamento de origen</label>
@@ -560,8 +710,7 @@ export default function ParentAttentionSystem() {
                 setFormData((p) => ({ ...p, selectedDepartment: e.target.value }))
               }
             >
-              <option value="">Selecciona departamento</option>
-              {departmentOptions.map((d) => (
+              {originDepartments.map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
@@ -578,11 +727,15 @@ export default function ParentAttentionSystem() {
               }
             >
               <option value="">Sin canalización</option>
-              {Object.keys(departments).map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
+              {Object.keys(departments).map((d) => {
+                const holder = holderDisplayFor(d);
+                const label = holder ? `${d} — ${holder}` : d;
+                return (
+                  <option key={d} value={d}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <div className="grid gap-3">
@@ -619,11 +772,16 @@ export default function ParentAttentionSystem() {
 
         <div className="flex items-center gap-3 mt-6">
           <button
-            onClick={submitTicket}
+            onClick={() => {
+              // persist appendToExisting toggle in formData before submit
+              setFormData((prev) => ({ ...prev, appendToExisting }));
+              // defer submit on next tick to ensure state sync
+              setTimeout(submitTicket, 0);
+            }}
             className="px-5 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-2"
           >
             <Save className="w-5 h-5" />
-            Guardar Ficha
+            {appendToExisting && formData.existingOpenTicketId ? "Agregar Seguimiento" : "Guardar Ficha"}
           </button>
         </div>
       </div>
@@ -783,6 +941,7 @@ export default function ParentAttentionSystem() {
 
           const data = await res.json();
           const arr = Array.isArray(data?.tickets) ? data.tickets : [];
+          console.log("[Dashboard] fetched tickets:", arr.length, "followupsCount:", data?._debug?.followupsCount ?? "n/a");
           setTickets(arr);
           setKpi({
             total: Number(data?.kpi?.total || 0),
