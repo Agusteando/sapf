@@ -45,14 +45,32 @@ export async function GET(request, context = { params: {} }) {
 
     const key = buildKey({ campus, status, schoolYear, month, showAllOpen });
 
-    const tickets = await wrapCache(key, status === "0" ? 3000 : 10000, async () => {
+    // More generous microcache for openAll to cut DB load drastically
+    const ttl = status === "0" && showAllOpen ? 25_000 : 10_000;
+
+    const tickets = await wrapCache(key, ttl, async () => {
       const pool = await getConnection();
 
       let query = `
         SELECT 
-          f.*,
+          f.id,
           LPAD(f.id, 5, "0") as folio_number,
-          DATE_FORMAT(f.fecha, "%Y-%m-%d %H:%i:%s") as fecha
+          DATE_FORMAT(f.fecha, "%Y-%m-%d %H:%i:%s") as fecha,
+          f.status,
+          f.created_by,
+          f.original_department,
+          f.parent_name,
+          f.student_name,
+          f.reason,
+          f.resolution,
+          f.is_complaint,
+          f.campus,
+          f.contact_method,
+          f.phone_number,
+          f.parent_email,
+          f.target_department,
+          f.department_email,
+          f.appointment_date
         FROM fichas_atencion f
         WHERE 1=1
       `;
@@ -87,11 +105,14 @@ export async function GET(request, context = { params: {} }) {
         query += " AND MONTH(f.fecha) = MONTH(NOW()) AND YEAR(f.fecha) = YEAR(NOW())";
       }
 
-      query += " ORDER BY f.fecha DESC LIMIT 500";
+      const isOpenAll = showAllOpen && status === "0";
+      const rowLimit = isOpenAll ? 150 : 400;
+      query += ` ORDER BY f.fecha DESC LIMIT ${rowLimit}`;
 
       const [rows] = await pool.execute(query, qParams);
 
-      if (rows.length > 0) {
+      // Avoid followups in heavy openAll mode
+      if (!isOpenAll && rows.length > 0) {
         const folios = rows.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
         const [fu] = await pool.execute(

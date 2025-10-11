@@ -3,8 +3,18 @@ import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 import { buildCampusClause } from "@/lib/schema";
 import { wrapCache } from "@/lib/cache";
+import { computeWeakETagFromString } from "@/lib/etag";
 
 export const runtime = "nodejs";
+
+// Simple in-memory throttle map to short-circuit identical, rapid repeat requests per client+query.
+const throttleMap = new Map(); // key => { ts: number }
+function getClientIp(request) {
+  const xf = request.headers.get("x-forwarded-for") || "";
+  const xr = request.headers.get("x-real-ip") || "";
+  const ip = (xf.split(",")[0] || xr || "anon").trim();
+  return ip || "anon";
+}
 
 function monthRange(yyyyMm) {
   const ok = /^\d{4}-\d{2}$/.test(yyyyMm);
@@ -43,10 +53,30 @@ export async function GET(request, context = { params: {} }) {
     const schoolYear = searchParams.get("schoolYear");
     const month = searchParams.get("month");
     const showAllOpen = searchParams.get("showAllOpen") === "true";
+    const ifNoneMatch = request.headers.get("if-none-match") || "";
+
+    // Server-side throttle: if identical query from same client repeats within the below window, short-circuit.
+    const ip = getClientIp(request);
+    const throttleKey = `${ip}|campus=${campus || ""}|status=${status || ""}|sy=${schoolYear || ""}|m=${month || ""}|open=${showAllOpen ? "1" : "0"}`;
+    const last = throttleMap.get(throttleKey)?.ts || 0;
+    const nowTs = Date.now();
+    const isOpenAll = showAllOpen && status === "0";
+    const throttleWindowMs = isOpenAll ? 1500 : 700; // conservative; complements server microcache
+    if (nowTs - last < throttleWindowMs) {
+      // Minimal log to confirm throttle effectiveness
+      console.warn("[api/dashboard] throttled repeat request:", throttleKey);
+      const res204 = new NextResponse(null, { status: 204 });
+      res204.headers.set("x-throttle", "dashboard");
+      return res204;
+    }
+    throttleMap.set(throttleKey, { ts: nowTs });
 
     const key = cacheKey({ campus, status, schoolYear, month, showAllOpen });
 
-    const result = await wrapCache(key, 5000, async () => {
+    // Tuned TTLs to reduce DB load further; openAll view is most spammy => longer TTL.
+    const ttlMs = isOpenAll ? 30_000 : 8_000;
+
+    const result = await wrapCache(key, ttlMs, async () => {
       const pool = await getConnection();
 
       // Build WHERE parts
@@ -56,8 +86,8 @@ export async function GET(request, context = { params: {} }) {
 
       let dateClause = "1=1";
       const dateParams = [];
-      if (showAllOpen && status === "0") {
-        // no date filter for open-all
+      if (isOpenAll) {
+        // explicitly skip date filter for open-all to let operators scan all open tickets
       } else if (month) {
         const r = monthRange(month);
         if (r) {
@@ -81,20 +111,39 @@ export async function GET(request, context = { params: {} }) {
         statusParams.push(status);
       }
 
-      // Tickets query
+      // Dynamically limit rows and optionally skip followups to avoid hammering DB.
+      const rowLimit = isOpenAll ? 150 : 400;
+      const shouldFetchFollowups = !isOpenAll; // skip followups for openAll to reduce load
+
+      // Narrow SELECT list to required fields only
       const ticketsSql = `
         SELECT 
-          f.*,
+          f.id,
           LPAD(f.id, 5, "0") as folio_number,
-          DATE_FORMAT(f.fecha, "%Y-%m-%d %H:%i:%s") as fecha
+          DATE_FORMAT(f.fecha, "%Y-%m-%d %H:%i:%s") as fecha,
+          f.status,
+          f.created_by,
+          f.original_department,
+          f.parent_name,
+          f.student_name,
+          f.reason,
+          f.resolution,
+          f.is_complaint,
+          f.campus,
+          f.contact_method,
+          f.phone_number,
+          f.parent_email,
+          f.target_department,
+          f.department_email,
+          f.appointment_date
         FROM fichas_atencion f
         WHERE ${campusClause.clause} AND ${dateClause} AND ${statusClause}
         ORDER BY f.fecha DESC
-        LIMIT 500
+        LIMIT ${rowLimit}
       `;
       const tParams = [...campusClause.params, ...dateParams, ...statusParams];
 
-      // KPI query
+      // KPI query (use same filters but no LIMIT)
       const kpiSql = `
         SELECT
           COUNT(*) AS total,
@@ -112,8 +161,8 @@ export async function GET(request, context = { params: {} }) {
         pool.execute(kpiSql, kParams),
       ]);
 
-      // Batch followups
-      if (tickets.length > 0) {
+      // Batch followups only when explicitly allowed
+      if (shouldFetchFollowups && tickets.length > 0) {
         const folios = tickets.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
         const [rows] = await pool.execute(
@@ -143,11 +192,28 @@ export async function GET(request, context = { params: {} }) {
       return { tickets, kpi: k };
     });
 
-    return NextResponse.json(result, {
+    const jsonStr = JSON.stringify(result);
+    const etag = computeWeakETagFromString(jsonStr);
+
+    // If client already has same payload, short-circuit to 304 w/o DB or JSON serialization.
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      const res304 = new NextResponse(null, { status: 304 });
+      res304.headers.set("ETag", etag);
+      res304.headers.set("x-cache", "dashboard-304");
+      res304.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=30");
+      return res304;
+    }
+
+    const res = new NextResponse(jsonStr, {
       headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "ETag": etag,
         "x-cache": "dashboard",
+        // Allow client/browser to keep it for a bit; server still guards with memory cache TTLs.
+        "Cache-Control": "private, max-age=10, stale-while-revalidate=30",
       },
     });
+    return res;
   } catch (error) {
     console.error("[api/dashboard][GET] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

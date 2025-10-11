@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp } from "lucide-react";
 
 export default function CompareCampusesPage() {
@@ -59,8 +59,20 @@ export default function CompareCampusesPage() {
     return arr;
   }, [schoolYear]);
 
+  // Client-side dedupe for compare fetches
+  const lastKeyRef = useRef("");
+  const lastAtRef = useRef(0);
+
   // Fetch comparison data
   useEffect(() => {
+    const key = JSON.stringify({ schoolYear, selectedMonth });
+    const now = Date.now();
+    if (lastKeyRef.current === key && (now - lastAtRef.current) < 3000) {
+      return;
+    }
+    lastKeyRef.current = key;
+    lastAtRef.current = now;
+
     (async () => {
       try {
         setLoading(true);

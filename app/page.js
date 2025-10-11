@@ -44,6 +44,10 @@ export default function ParentAttentionSystem() {
     selectedDepartment: "",
   });
 
+  // Client-side response cache for dashboard data keyed by filtersKey to minimize server requests
+  const dashboardCacheRef = useRef(new Map()); // key -> { data, etag, expiresAt }
+  const lastFetchAtRef = useRef(new Map()); // key -> timestamp
+
   const campuses = [
     { value: "PMB", label: "Primaria Baja Metepec" },
     { value: "PMA", label: "Primaria Alta Metepec" },
@@ -695,7 +699,35 @@ export default function ParentAttentionSystem() {
     const abortRef = useRef(null);
     const debounceRef = useRef(null);
 
+    // Client-side dedupe and TTL microcache to avoid repeated requests
     useEffect(() => {
+      const now = Date.now();
+      const isOpenAll = showAllOpen && statusFilter === "0";
+      const TTL_MS = isOpenAll ? 30000 : 8000;
+
+      // If we have fresh cached data for this key, use it and skip network
+      const cached = dashboardCacheRef.current.get(filtersKey);
+      if (cached && cached.expiresAt > now) {
+        setLoadError((prev) => (prev ? "" : prev));
+        const data = cached.data;
+        const arr = Array.isArray(data?.tickets) ? data.tickets : [];
+        setTickets(arr);
+        setKpi({
+          total: Number(data?.kpi?.total || 0),
+          abiertos: Number(data?.kpi?.abiertos || 0),
+          cerrados: Number(data?.kpi?.cerrados || 0),
+          quejas: Number(data?.kpi?.quejas || 0),
+          avg_resolucion_horas: data?.kpi?.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
+        });
+        return;
+      }
+
+      // Hard cooldown: if lastFetch within TTL, skip entirely
+      const lastAt = lastFetchAtRef.current.get(filtersKey) || 0;
+      if (now - lastAt < TTL_MS) {
+        return;
+      }
+
       if (abortRef.current) {
         abortRef.current.abort();
       }
@@ -705,16 +737,41 @@ export default function ParentAttentionSystem() {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Stale ETag (even if expired) enables server 304 short-circuit
+      const staleEtag = cached?.etag || "";
+
       debounceRef.current = setTimeout(async () => {
         try {
           setLoadError((prev) => (prev ? "" : prev));
           const url = `/api/dashboard?${buildQS()}`;
-          console.log("[Dashboard] GET", url);
           const res = await fetch(url, {
             cache: "no-store",
-            headers: { "x-client": "sapf-app" },
+            headers: {
+              "x-client": "sapf-app",
+              ...(staleEtag ? { "If-None-Match": staleEtag } : {}),
+            },
             signal: controller.signal,
           });
+
+          // 204 => server throttle; keep existing UI and extend cache window slightly
+          if (res.status === 204) {
+            const e = dashboardCacheRef.current.get(filtersKey);
+            if (e) {
+              e.expiresAt = Date.now() + Math.min(3000, TTL_MS);
+              dashboardCacheRef.current.set(filtersKey, e);
+            }
+            return;
+          }
+
+          if (res.status === 304) {
+            // Data unchanged; refresh client cache TTL
+            if (cached) {
+              cached.expiresAt = Date.now() + TTL_MS;
+              dashboardCacheRef.current.set(filtersKey, cached);
+            }
+            return;
+          }
+
           if (!res.ok) {
             const txt = await res.text();
             console.warn("[Dashboard] dashboard not ok:", res.status, txt.slice(0, 200));
@@ -723,8 +780,10 @@ export default function ParentAttentionSystem() {
             setLoadError("No se pudo cargar la información.");
             return;
           }
+
           const data = await res.json();
-          setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
+          const arr = Array.isArray(data?.tickets) ? data.tickets : [];
+          setTickets(arr);
           setKpi({
             total: Number(data?.kpi?.total || 0),
             abiertos: Number(data?.kpi?.abiertos || 0),
@@ -732,29 +791,54 @@ export default function ParentAttentionSystem() {
             quejas: Number(data?.kpi?.quejas || 0),
             avg_resolucion_horas: data?.kpi?.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
           });
+
+          const etag = res.headers.get("etag") || "";
+          dashboardCacheRef.current.set(filtersKey, {
+            data,
+            etag,
+            expiresAt: Date.now() + TTL_MS,
+          });
+          lastFetchAtRef.current.set(filtersKey, Date.now());
         } catch (e) {
           if (controller.signal.aborted) {
-            console.log("[Dashboard] dashboard aborted");
             return;
           }
           console.error("[Dashboard] error", e);
           setLoadError("Error de red.");
           setTickets([]);
         }
-      }, 400);
+      }, 300);
 
       return () => {
         controller.abort();
         clearTimeout(debounceRef.current);
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filtersKey]);
+    }, [filtersKey, selectedCampus, statusFilter, showAllOpen, selectedMonth, schoolYear]);
 
-    // Distribution stats (optional) with debounce to avoid bursts
+    // Distribution stats (optional) with debounce and client-side dedupe to avoid bursts
     const distAbortRef = useRef(null);
     const distDebounceRef = useRef(null);
+    const lastDistKeyRef = useRef("");
+    const lastDistAtRef = useRef(0);
+
     useEffect(() => {
       if (!showStats) return;
+
+      const distKey = JSON.stringify({
+        campus: selectedCampus,
+        month: selectedMonth || "",
+        schoolYear: selectedMonth ? "" : schoolYear || "",
+        openAll: showAllOpen && statusFilter === "0",
+      });
+
+      const now = Date.now();
+      if (lastDistKeyRef.current === distKey && (now - lastDistAtRef.current) < 3000) {
+        return;
+      }
+      lastDistKeyRef.current = distKey;
+      lastDistAtRef.current = now;
+
       if (distAbortRef.current) distAbortRef.current.abort();
       if (distDebounceRef.current) clearTimeout(distDebounceRef.current);
 
@@ -771,7 +855,6 @@ export default function ParentAttentionSystem() {
               distUrl += `&schoolYear=${encodeURIComponent(schoolYear)}`;
             }
           }
-          console.log("[Dashboard] GET", distUrl);
           const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" }, signal: controller.signal });
           const data = await res.json();
           setDistStats(Array.isArray(data) ? data : []);
