@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause } from "@/lib/schema";
 import { wrapCache, getCache } from "@/lib/cache";
 import { computeWeakETagFromString } from "@/lib/etag";
 
@@ -85,9 +85,9 @@ export async function GET(request, context = { params: {} }) {
     const result = await wrapCache(key, ttlMs, async () => {
       const pool = await getConnection();
 
-      // Build WHERE parts
+      // Build WHERE parts: use normalized campus matching to tolerate label/code/case/space differences
       const campusClause = campus
-        ? await buildCampusClause(pool, "f", campus)
+        ? await buildNormalizedCampusClause(pool, "f", campus)
         : { clause: "1=1", params: [] };
 
       let dateClause = "1=1";
@@ -173,6 +173,22 @@ export async function GET(request, context = { params: {} }) {
       ]);
 
       console.log("[api/dashboard] tickets count:", tickets?.length || 0);
+
+      // If no tickets returned, log distinct campus values to help diagnose mismatches
+      if (Array.isArray(tickets) && tickets.length === 0 && campus) {
+        try {
+          const [distinct] = await pool.execute(
+            `SELECT TRIM(UPPER(campus)) AS campus_norm, campus AS raw, COUNT(*) AS cnt
+             FROM fichas_atencion
+             GROUP BY campus_norm, raw
+             ORDER BY cnt DESC
+             LIMIT 20`
+          );
+          console.warn("[api/dashboard] No tickets found. Top distinct campus values:", distinct);
+        } catch (e) {
+          console.warn("[api/dashboard] distinct campus probe failed:", e?.message || e);
+        }
+      }
 
       // Batch followups only when explicitly allowed
       let followupsCount = 0;

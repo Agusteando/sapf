@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause } from "@/lib/schema";
 import { wrapCache, getCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
@@ -82,7 +82,7 @@ export async function GET(request, context = { params: {} }) {
       const qParams = [];
 
       if (campus) {
-        const campusClause = await buildCampusClause(pool, "f", campus);
+        const campusClause = await buildNormalizedCampusClause(pool, "f", campus);
         query += ` AND ${campusClause.clause}`;
         qParams.push(...campusClause.params);
       }
@@ -120,6 +120,22 @@ export async function GET(request, context = { params: {} }) {
 
       const [rows] = await pool.execute(query, qParams);
       console.log("[api/tickets][GET] tickets rows:", rows?.length || 0);
+
+      // If no tickets returned, log distinct campus values to help diagnose mismatches
+      if (Array.isArray(rows) && rows.length === 0 && campus) {
+        try {
+          const [distinct] = await pool.execute(
+            `SELECT TRIM(UPPER(campus)) AS campus_norm, campus AS raw, COUNT(*) AS cnt
+             FROM fichas_atencion
+             GROUP BY campus_norm, raw
+             ORDER BY cnt DESC
+             LIMIT 20`
+          );
+          console.warn("[api/tickets][GET] No tickets found. Top distinct campus values:", distinct);
+        } catch (e) {
+          console.warn("[api/tickets][GET] distinct campus probe failed:", e?.message || e);
+        }
+      }
 
       // Avoid followups in heavy openAll mode
       if (!isOpenAll && rows.length > 0) {
