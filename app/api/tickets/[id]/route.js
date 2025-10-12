@@ -18,9 +18,10 @@ export async function GET(request, context = { params: {} }) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
+    const folioNumber = tickets[0].folio_number;
     const [followups] = await connection.execute(
       "SELECT * FROM seguimiento WHERE ticket_id = ? ORDER BY fecha ASC",
-      [tickets[0].folio_number]
+      [folioNumber]
     );
     console.log("[api/tickets/:id][GET] followups count:", followups?.length || 0);
 
@@ -48,34 +49,49 @@ export async function PUT(request, context = { params: {} }) {
     );
 
     const [tickets] = await connection.execute(
-      "SELECT * FROM fichas_atencion WHERE id = ?",
+      "SELECT *, LPAD(id, 5, '0') as folio_number FROM fichas_atencion WHERE id = ?",
       [id]
     );
 
     if (target_department && tickets.length > 0) {
       const ticket = tickets[0];
-      const folioNumber = String(ticket.id).padStart(5, "0");
+      const folioNumber = ticket.folio_number;
 
       await connection.execute(
         `INSERT INTO seguimiento (
-          ticket_id, campus, contact_method, parent_name, student_name,
-          phone_number, parent_email, reason, resolution, target_department,
-          department_email, appointment_date, status, fecha
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          ticket_id,
+          fecha,
+          parent_name,
+          reason,
+          resolution,
+          campus,
+          contact_method,
+          department_email,
+          status,
+          target_department,
+          is_complaint,
+          appointment_date,
+          student_name,
+          phone_number,
+          parent_email,
+          school_code
+        ) VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           folioNumber,
+          ticket.parent_name,
+          ticket.reason,
+          resolution,
           ticket.campus,
           ticket.contact_method,
-          ticket.parent_name,
+          ticket.department_email,
+          status,
+          target_department,
+          ticket.is_complaint ? 1 : 0,
+          ticket.appointment_date || null,
           ticket.student_name,
           ticket.phone_number,
           ticket.parent_email,
-          ticket.reason,
-          resolution,
-          target_department,
-          ticket.department_email,
-          ticket.appointment_date,
-          status,
+          ticket.school_code || ticket.campus || "",
         ]
       );
       console.log("[api/tickets/:id][PUT] appended seguimiento for folio:", folioNumber);

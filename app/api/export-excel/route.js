@@ -1,6 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
+import { buildNormalizedCampusClause } from "@/lib/schema";
 import ExcelJS from "exceljs";
 
 export async function GET(request, context = { params: {} }) {
@@ -18,13 +19,18 @@ export async function GET(request, context = { params: {} }) {
       endDate,
     });
 
-    const connection = await getConnection();
+    const pool = await getConnection();
+
+    // Build dynamic WHERE with normalized campus (school_code preferred)
+    const campusClause = campus
+      ? await buildNormalizedCampusClause(pool, "f", campus)
+      : { clause: "1=1", params: [] };
 
     let query = `
       SELECT 
         LPAD(f.id, 5, "0") as Folio,
         DATE_FORMAT(f.fecha, "%Y-%m-%d %H:%i") as Fecha,
-        f.campus as Plantel,
+        COALESCE(NULLIF(f.school_code, ""), f.campus) as Plantel,
         f.original_department as Departamento,
         f.parent_name as Padre,
         f.student_name as Alumno,
@@ -37,15 +43,11 @@ export async function GET(request, context = { params: {} }) {
         f.phone_number as Telefono,
         f.parent_email as Email
       FROM fichas_atencion f
-      WHERE 1=1
+      WHERE ${campusClause.clause}
     `;
-    const qParams = [];
+    const qParams = [...campusClause.params];
 
-    if (campus) {
-      query += " AND f.campus = ?";
-      qParams.push(campus);
-    }
-    if (status) {
+    if (status && status !== "") {
       query += " AND f.status = ?";
       qParams.push(status);
     }
@@ -60,7 +62,10 @@ export async function GET(request, context = { params: {} }) {
 
     query += " ORDER BY f.fecha DESC";
 
-    const [rows] = await connection.execute(query, qParams);
+    console.log("[api/export-excel] SQL:", query.replace(/\s+/g, " ").trim());
+    console.log("[api/export-excel] params:", qParams);
+
+    const [rows] = await pool.execute(query, qParams);
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Fichas de Atención");

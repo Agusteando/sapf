@@ -85,7 +85,7 @@ export async function GET(request, context = { params: {} }) {
     const result = await wrapCache(key, ttlMs, async () => {
       const pool = await getConnection();
 
-      // Build WHERE parts: use normalized campus matching to tolerate label/code/case/space differences
+      // Build WHERE parts: use normalized school_code/campus matching to tolerate label/code/case/space differences
       const campusClause = campus
         ? await buildNormalizedCampusClause(pool, "f", campus)
         : { clause: "1=1", params: [] };
@@ -136,6 +136,7 @@ export async function GET(request, context = { params: {} }) {
           f.resolution,
           f.is_complaint,
           f.campus,
+          f.school_code,
           f.contact_method,
           f.phone_number,
           f.parent_email,
@@ -174,17 +175,21 @@ export async function GET(request, context = { params: {} }) {
 
       console.log("[api/dashboard] tickets count:", tickets?.length || 0);
 
-      // If no tickets returned, log distinct campus values to help diagnose mismatches
+      // If no tickets returned, log distinct campus labels (prefer school_code) to help diagnose mismatches
       if (Array.isArray(tickets) && tickets.length === 0 && campus) {
         try {
           const [distinct] = await pool.execute(
-            `SELECT TRIM(UPPER(campus)) AS campus_norm, campus AS raw, COUNT(*) AS cnt
+            `SELECT 
+               TRIM(UPPER(COALESCE(school_code, campus))) AS campus_norm, 
+               school_code AS school_code_raw,
+               campus AS campus_raw,
+               COUNT(*) AS cnt
              FROM fichas_atencion
-             GROUP BY campus_norm, raw
+             GROUP BY campus_norm, school_code_raw, campus_raw
              ORDER BY cnt DESC
              LIMIT 20`
           );
-          console.warn("[api/dashboard] No tickets found. Top distinct campus values:", distinct);
+          console.warn("[api/dashboard] No tickets found. Top distinct campus values (school_code first):", distinct);
         } catch (e) {
           console.warn("[api/dashboard] distinct campus probe failed:", e?.message || e);
         }

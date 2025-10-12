@@ -70,6 +70,7 @@ export async function GET(request, context = { params: {} }) {
           f.resolution,
           f.is_complaint,
           f.campus,
+          f.school_code,
           f.contact_method,
           f.phone_number,
           f.parent_email,
@@ -125,9 +126,13 @@ export async function GET(request, context = { params: {} }) {
       if (Array.isArray(rows) && rows.length === 0 && campus) {
         try {
           const [distinct] = await pool.execute(
-            `SELECT TRIM(UPPER(campus)) AS campus_norm, campus AS raw, COUNT(*) AS cnt
+            `SELECT 
+               TRIM(UPPER(COALESCE(school_code, campus))) AS campus_norm, 
+               school_code AS school_code_raw,
+               campus AS campus_raw, 
+               COUNT(*) AS cnt
              FROM fichas_atencion
-             GROUP BY campus_norm, raw
+             GROUP BY campus_norm, school_code_raw, campus_raw
              ORDER BY cnt DESC
              LIMIT 20`
           );
@@ -208,30 +213,49 @@ export async function POST(request, context = { params: {} }) {
       status,
     });
 
+    // Insert ticket, persisting both school_code (preferred) and campus for legacy compatibility
     const [result] = await pool.execute(
       `INSERT INTO fichas_atencion (
-        campus, contact_method, is_complaint, parent_name, student_name,
-        phone_number, parent_email, reason, resolution, initial_action,
-        appointment_date, target_department, department_email, created_by,
-        original_department, status, fecha
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [
+        fecha,
+        parent_name,
+        reason,
+        resolution,
+        initial_action,
         campus,
         contact_method,
+        department_email,
+        updated_at,
+        status,
+        target_department,
         is_complaint,
-        parent_name,
+        appointment_date,
         student_name,
         phone_number,
         parent_email,
+        school_code,
+        created_by,
+        original_department
+      ) VALUES (
+        NOW(), ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )`,
+      [
+        parent_name,
         reason,
         resolution,
         resolution,
-        appointment_date || null,
-        target_department,
+        campus, // legacy campus field (may be numeric/text in older rows)
+        contact_method,
         department_email,
-        created_by,
-        original_department,
         status || "0",
+        target_department || "",
+        is_complaint ? 1 : 0,
+        appointment_date || null,
+        student_name,
+        phone_number,
+        parent_email,
+        campus, // school_code: use selected campus code (e.g., PT, ST, etc.)
+        created_by || "",
+        original_department || "",
       ]
     );
 
@@ -245,24 +269,39 @@ export async function POST(request, context = { params: {} }) {
     ) {
       await pool.execute(
         `INSERT INTO seguimiento (
-          ticket_id, campus, contact_method, parent_name, student_name,
-          phone_number, parent_email, reason, resolution, target_department,
-          department_email, appointment_date, status, fecha
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [
-          folioNumber,
+          ticket_id,
+          fecha,
+          parent_name,
+          reason,
+          resolution,
           campus,
           contact_method,
-          parent_name,
+          department_email,
+          status,
+          target_department,
+          is_complaint,
+          appointment_date,
           student_name,
           phone_number,
           parent_email,
+          school_code
+        ) VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          folioNumber,
+          parent_name,
           reason,
           resolution,
-          target_department,
+          campus,
+          contact_method,
           department_email,
-          appointment_date || null,
           status || "0",
+          target_department,
+          is_complaint ? 1 : 0,
+          appointment_date || null,
+          student_name,
+          phone_number,
+          parent_email,
+          campus, // school_code
         ]
       );
       console.log("[api/tickets][POST] inserted initial seguimiento for folio:", folioNumber);

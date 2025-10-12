@@ -69,7 +69,7 @@ export async function GET(request, context = { params: {} }) {
     const [rows] = await pool.execute(
       `
       SELECT
-        campus,
+        COALESCE(NULLIF(school_code, ''), campus) AS campus,
         COUNT(*) AS total,
         SUM(CASE WHEN status = '0' THEN 1 ELSE 0 END) AS abiertos,
         SUM(CASE WHEN status = '1' THEN 1 ELSE 0 END) AS cerrados,

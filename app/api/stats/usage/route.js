@@ -16,12 +16,12 @@ export async function GET(request, context = { params: {} }) {
 
     const [stats] = await connection.execute(`
       SELECT 
-        campus as label,
+        COALESCE(NULLIF(school_code, ''), campus) as label,
         COUNT(*) as conteo
       FROM fichas_atencion
       WHERE MONTH(fecha) = MONTH(NOW())
         AND YEAR(fecha) = YEAR(NOW())
-      GROUP BY campus
+      GROUP BY COALESCE(NULLIF(school_code, ''), campus)
       ORDER BY conteo DESC
     `);
 

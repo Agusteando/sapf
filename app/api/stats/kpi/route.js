@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause } from "@/lib/schema";
 import { getCache, setCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
@@ -51,7 +51,7 @@ export async function GET(request, context = { params: {} }) {
     const pool = await getConnection();
 
     const campusClause = campus
-      ? await buildCampusClause(pool, "", campus)
+      ? await buildNormalizedCampusClause(pool, "", campus)
       : { clause: "1=1", params: [] };
 
     let dateClause = "1=1";
