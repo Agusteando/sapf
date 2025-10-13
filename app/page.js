@@ -18,9 +18,83 @@ import {
   BarChart3,
   Mail,
   CornerDownRight,
-  RefreshCw
+  RefreshCw,
+  Stethoscope
 } from "lucide-react";
 import Overlay from "@/components/overlay";
+
+// Reusable student search, used by Ticket and Nursing forms
+function SearchStudent({ students, onSelected, placeholder = "Buscar estudiante o padre (mínimo 3 caracteres)..." }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [results, setResults] = useState([]);
+
+  const doSearch = (term) => {
+    setSearchTerm(term);
+    if (term.length < 3) {
+      setResults([]);
+      return;
+    }
+    const allStudents = Array.isArray(students) ? students : [];
+    const filtered = allStudents.filter((student) => {
+      const fullName = `${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim().toLowerCase();
+      const parentName = `${student.nombre_padre ?? ""} ${student.apellido_paterno_padre ?? ""} ${student.nombre_madre ?? ""} ${student.apellido_paterno_madre ?? ""}`.trim().toLowerCase();
+      const haystack = `${fullName} ${parentName}`.trim();
+      return haystack.includes(term.toLowerCase());
+    });
+    setResults(filtered.slice(0, 10));
+  };
+
+  return (
+    <div className="mb-6">
+      <div className="relative">
+        <div className="flex items-center gap-2 mb-2">
+          <Search className="w-5 h-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder={placeholder}
+            className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            value={searchTerm}
+            onChange={(e) => doSearch(e.target.value)}
+          />
+        </div>
+
+        {results.length > 0 && (
+          <div className="absolute z-10 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-y-auto">
+            {results.map((student, idx) => (
+              <div
+                key={idx}
+                className="p-4 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-colors"
+                onClick={() => {
+                  onSelected?.(student);
+                  setResults([]);
+                  setSearchTerm("");
+                }}
+              >
+                <div className="font-semibold text-lg">
+                  {student.nombres} {student.apellido_paterno}{" "}
+                  {student.apellido_materno}
+                </div>
+                <div className="text-sm text-gray-600 mt-1">
+                  Grado: {student.grado} | Grupo: {student.grupo} | Matrícula:{" "}
+                  {student.matricula}
+                </div>
+                <div className="text-sm text-gray-500 mt-1">
+                  Padre: {student.nombre_padre} {student.apellido_paterno_padre}
+                </div>
+                {Array.isArray(student.siblings) && student.siblings.length > 0 && (
+                  <div className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    Hermanos: {student.siblings.map((s) => s.nombres).join(", ")}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function ParentAttentionSystem() {
   const [currentView, setCurrentView] = useState("dashboard");
@@ -58,7 +132,7 @@ export default function ParentAttentionSystem() {
     existingOpenTicketId: null,
   });
 
-  // Dashboard-specific state (manual fetch)
+  // Dashboard-specific state
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
   const [dashSchoolYear, setDashSchoolYear] = useState("");
   const [dashSelectedMonth, setDashSelectedMonth] = useState("");
@@ -66,18 +140,10 @@ export default function ParentAttentionSystem() {
   const [dashLastLoadedAt, setDashLastLoadedAt] = useState(null);
   const [dashLoadError, setDashLoadError] = useState("");
 
-  // Distribution stats (manual fetch)
+  // Distribution stats (auto fetch when visible)
   const [showStats, setShowStats] = useState(false);
   const [distStats, setDistStats] = useState([]);
   const [distLoading, setDistLoading] = useState(false);
-
-  // Expose a simple refresh signal for when user adds new tickets/followups
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const refreshTicketsAndKpi = useCallback(() => {
-    // Now only marks intent; fetching still requires user clicking the button
-    console.log("[UI] refresh requested; click 'Cargar/Actualizar' to fetch latest from MySQL.");
-    setRefreshNonce((n) => n + 1);
-  }, []);
 
   const campuses = [
     { value: "PMB", label: "Primaria Baja Metepec" },
@@ -101,44 +167,35 @@ export default function ParentAttentionSystem() {
     "Artes y Deportes",
   ];
 
-  // Load school years once (minor DB read; kept to power the month selector)
+  // Load school years once (powers the month selector)
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const r = await fetch("/api/stats/school-years", { cache: "no-store" });
         if (!mounted) return;
-        if (!r.ok) {
-          throw new Error("school-years not ok");
-        }
+        if (!r.ok) throw new Error("school-years not ok");
         const data = await r.json();
         const items = Array.isArray(data?.items) ? data.items : [];
-        if (mounted) {
-          setSchoolYears(items);
-          setDefaultSchoolYear(data?.default || items[0] || "");
-          // Initialize dashboard school year
-          setDashSchoolYear((prev) => prev || data?.default || items[0] || "");
-        }
+        setSchoolYears(items);
+        setDefaultSchoolYear(data?.default || items[0] || "");
+        setDashSchoolYear((prev) => prev || data?.default || items[0] || "");
       } catch (e) {
         console.warn("[app/page] failed to fetch school years", e);
         const now = new Date();
         const y = now.getFullYear();
         const base = now.getMonth() >= 7 ? y : y - 1;
         const fallback = [];
-        for (let i = 0; i < 6; i++) {
-          fallback.push(`${base - i}-${base - i + 1}`);
-        }
-        if (mounted) {
-          setSchoolYears(fallback);
-          setDefaultSchoolYear(fallback[0]);
-          setDashSchoolYear((prev) => prev || fallback[0]);
-        }
+        for (let i = 0; i < 6; i++) fallback.push(`${base - i}-${base - i + 1}`);
+        setSchoolYears(fallback);
+        setDefaultSchoolYear(fallback[0]);
+        setDashSchoolYear((prev) => prev || fallback[0]);
       }
     })();
     return () => { mounted = false; };
   }, []);
 
-  // Fetch helpers gated by current view to avoid hitting DB when not needed
+  // Fetch helpers gated by current view
   const fetchStudentData = useCallback(async (campus) => {
     console.log("[students] fetching for campus:", campus);
     setLoading(true);
@@ -194,7 +251,6 @@ export default function ParentAttentionSystem() {
         return acc;
       }, {});
       setDepartments(grouped);
-
       setFormData((prev) => {
         const current = prev.selectedDepartment;
         const available = Object.keys(grouped);
@@ -227,12 +283,12 @@ export default function ParentAttentionSystem() {
     }
   }, []);
 
-  // Only load students/departments when on relevant views
+  // Load students/departments when entering relevant views or when plantel changes
   useEffect(() => {
-    if (currentView === "form") {
+    if (currentView === "form" || currentView === "nursing") {
       fetchStudentData(selectedCampus);
-      fetchDepartments();
-    } else if (currentView === "departments") {
+    }
+    if (currentView === "form" || currentView === "departments") {
       fetchDepartments();
     }
   }, [currentView, selectedCampus, fetchStudentData, fetchDepartments]);
@@ -286,8 +342,6 @@ export default function ParentAttentionSystem() {
           appendToExisting: false,
           existingOpenTicketId: null,
         }));
-        // Inform user to manually refresh the dashboard
-        console.log("[UI] Seguimiento guardado. Use el botón 'Cargar/Actualizar' para ver datos actualizados.");
         return;
       }
 
@@ -333,7 +387,6 @@ export default function ParentAttentionSystem() {
           existingOpenTicketId: null,
           appendToExisting: false,
         });
-        console.log("[UI] Ficha creada. Use 'Cargar/Actualizar' para actualizar el tablero.");
       } else {
         alert(result?.error || "No se pudo generar la ficha");
       }
@@ -384,123 +437,15 @@ export default function ParentAttentionSystem() {
     return String(cand);
   }
 
-  const StudentSearch = () => {
-    const [searchTerm, setSearchTerm] = useState("");
-    const [results, setResults] = useState([]);
-    const [duplicate, setDuplicate] = useState(null);
-
-    const searchStudents = (term) => {
-      setSearchTerm(term);
-      if (term.length < 3) {
-        setResults([]);
-        return;
-      }
-
-      const allStudents = Array.isArray(students) ? students : [];
-      const filtered = allStudents.filter((student) => {
-        const fullName = `${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim().toLowerCase();
-        const parentName = `${student.nombre_padre ?? ""} ${student.apellido_paterno_padre ?? ""} ${student.nombre_madre ?? ""} ${student.apellido_paterno_madre ?? ""}`.trim().toLowerCase();
-        return (
-          fullName.includes(term.toLowerCase()) ||
-          parentName.includes(term.toLowerCase())
-        );
-      });
-      setResults(filtered.slice(0, 10));
-    };
-
-    const selectStudent = async (student) => {
-      const parentName = student.nombre_padre
-        ? `${student.nombre_padre} ${student.apellido_paterno_padre ?? ""}`.trim()
-        : "";
-
-      setFormData((prev) => ({
-        ...prev,
-        studentName: `${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim(),
-        parentName,
-        phoneNumber: student.telefono_padre || student.telefono_madre || "",
-        parentEmail: student.email_padre || student.email_madre || "",
-      }));
-
-      const dup = await checkDuplicate(parentName);
-      setDuplicate(dup);
-      setFormData((prev) => ({
-        ...prev,
-        existingOpenTicketId: dup?.dup === 1 ? dup?.id : null,
-        appendToExisting: dup?.dup === 1 ? true : prev.appendToExisting,
-      }));
-
-      setResults([]);
-      setSearchTerm("");
-    };
-
-    return (
-      <div className="mb-6">
-        <div className="relative">
-          <div className="flex items-center gap-2 mb-2">
-            <Search className="w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Buscar estudiante o padre (mínimo 3 caracteres)..."
-              className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={searchTerm}
-              onChange={(e) => searchStudents(e.target.value)}
-            />
-          </div>
-
-          {results.length > 0 && (
-            <div className="absolute z-10 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-y-auto">
-              {results.map((student, idx) => (
-                <div
-                  key={idx}
-                  className="p-4 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-colors"
-                  onClick={() => selectStudent(student)}
-                >
-                  <div className="font-semibold text-lg">
-                    {student.nombres} {student.apellido_paterno}{" "}
-                    {student.apellido_materno}
-                  </div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Grado: {student.grado} | Grupo: {student.grupo} | Matrícula:{" "}
-                    {student.matricula}
-                  </div>
-                  <div className="text-sm text-gray-500 mt-1">
-                    Padre: {student.nombre_padre}{" "}
-                    {student.apellido_paterno_padre}
-                  </div>
-                  {Array.isArray(student.siblings) && student.siblings.length > 0 && (
-                    <div className="text-xs text-blue-600 mt-2 flex items-center gap-1">
-                      <Users className="w-3 h-3" />
-                      Hermanos: {student.siblings.map((s) => s.nombres).join(", ")}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {duplicate && duplicate.dup === 1 && (
-          <div className="mt-3 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-600" />
-            <span className="text-red-700">
-              Ya existe un folio abierto para {formData.parentName}. Folio:{" "}
-              {String(duplicate.id).padStart(5, "0")} — se agregará seguimiento por defecto.
-            </span>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const FollowupForm = ({ ticket, depts, onSaved }) => {
     const [resolution, setResolution] = useState("");
     const [status, setStatus] = useState(ticket.status || "0");
     const [targetDepartment, setTargetDepartment] = useState(ticket.target_department || "");
     const [sending, setSending] = useState(false);
     const [sendEmail, setSendEmail] = useState(false);
+    // IMPORTANT: default recipients ONLY internal department email; never parent here.
     const [emailTo, setEmailTo] = useState(() => {
       const list = [];
-      if (ticket.parent_email) list.push(ticket.parent_email);
       if (ticket.department_email) list.push(ticket.department_email);
       return list.join(", ");
     });
@@ -555,7 +500,8 @@ export default function ParentAttentionSystem() {
               body: JSON.stringify({
                 to: recipients,
                 subject: emailSubject || `Seguimiento al folio ${String(ticket.id).padStart(5, "0")}`,
-                html
+                html,
+                scope: "internal" // Explicitly internal; API enforces internal-only domains here.
               })
             });
             if (!emailRes.ok) {
@@ -657,11 +603,14 @@ export default function ParentAttentionSystem() {
               onChange={(e) => setSendEmail(e.target.checked)}
             />
             <span className="text-sm font-medium text-blue-900 flex items-center gap-1">
-              <Mail className="w-4 h-4" /> Enviar notificación por correo
+              <Mail className="w-4 h-4" /> Notificar por correo (solo interno)
             </span>
           </label>
           {sendEmail && (
             <div className="grid gap-2">
+              <div className="text-xs text-blue-900">
+                Solo se permiten correos institucionales en esta sección.
+              </div>
               <div className="grid gap-1">
                 <label className="text-sm text-blue-900">Para (separado por coma)</label>
                 <input
@@ -866,6 +815,7 @@ export default function ParentAttentionSystem() {
 
   const TicketForm = () => {
     const [appendToExisting, setAppendToExisting] = useState(false);
+    const [duplicate, setDuplicate] = useState(null);
 
     useEffect(() => {
       setAppendToExisting(Boolean(formData.existingOpenTicketId));
@@ -883,30 +833,42 @@ export default function ParentAttentionSystem() {
           Nueva Ficha - {campuses.find((c) => c.value === selectedCampus)?.label}
         </h2>
 
-        <StudentSearch />
+        <SearchStudent
+          students={students}
+          onSelected={async (student) => {
+            const parentName = student.nombre_padre
+              ? `${student.nombre_padre} ${student.apellido_paterno_padre ?? ""}`.trim()
+              : "";
 
-        {formData.existingOpenTicketId && (
-          <div className="mb-4 p-4 rounded-lg border-2 border-amber-300 bg-amber-50 text-amber-900">
-            Se detectó una ficha abierta para este padre/madre. Folio:{" "}
-            <strong>{String(formData.existingOpenTicketId).padStart(5, "0")}</strong>. Puedes
-            agregar un seguimiento a ese folio o crear una nueva ficha.
-            <div className="mt-2 flex items-center gap-2">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={appendToExisting}
-                  onChange={(e) => {
-                    setAppendToExisting(e.target.checked);
-                    setFormData((prev) => ({ ...prev, appendToExisting: e.target.checked }));
-                  }}
-                />
-                Agregar seguimiento al folio existente
-              </label>
-            </div>
+            setFormData((prev) => ({
+              ...prev,
+              studentName: `${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim(),
+              parentName,
+              phoneNumber: student.telefono_padre || student.telefono_madre || "",
+              parentEmail: student.email_padre || student.email_madre || "",
+            }));
+
+            const dup = await checkDuplicate(parentName);
+            setDuplicate(dup);
+            setFormData((prev) => ({
+              ...prev,
+              existingOpenTicketId: dup?.dup === 1 ? dup?.id : null,
+              appendToExisting: dup?.dup === 1 ? true : prev.appendToExisting,
+            }));
+          }}
+        />
+
+        {duplicate && duplicate.dup === 1 && (
+          <div className="mt-3 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-600" />
+            <span className="text-red-700">
+              Ya existe un folio abierto para {formData.parentName}. Folio:{" "}
+              {String(duplicate.id).padStart(5, "0")} — se agregará seguimiento por defecto.
+            </span>
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2 mt-4">
           <div className="grid gap-3">
             <label className="text-sm font-semibold text-gray-700">Nombre del Padre/Madre/Tutor</label>
             <input
@@ -1105,62 +1067,253 @@ export default function ParentAttentionSystem() {
     );
   };
 
-  // Manual dashboard fetch: requires user action
-  const Dashboard = () => {
-    const [inflight, setInflight] = useState(false);
+  // Nursing Report Form (only section allowed to email parents)
+  const NursingReport = () => {
+    const [parentName, setParentName] = useState("");
+    const [parentEmail, setParentEmail] = useState("");
+    const [studentName, setStudentName] = useState("");
+    const [report, setReport] = useState("");
+    const [actions, setActions] = useState("");
+    const [sending, setSending] = useState(false);
 
-    const months = useMemo(() => {
-      if (!dashSchoolYear) return [];
-      const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
-      const arr = [];
-      for (let m = 7; m < 12; m++) {
-        const date = new Date(startYear, m, 1);
-        arr.push({
-          value: `${startYear}-${String(m + 1).padStart(2, "0")}`,
-          label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
+    async function submitNursingReport() {
+      if (!parentName || !parentEmail || !studentName || !report) {
+        alert("Completa los campos requeridos (Padre/Madre, Correo, Alumno, Reporte).");
+        return;
+      }
+      setSending(true);
+      try {
+        // Store in DB as a specialized classification
+        const createRes = await fetch("/api/tickets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({
+            campus: selectedCampus,
+            contact_method: "nursing",
+            is_complaint: 0,
+            parent_name: parentName,
+            student_name: studentName,
+            phone_number: "",
+            parent_email: parentEmail,
+            reason: `Reporte de Enfermería`,
+            resolution: actions || report,
+            appointment_date: null,
+            target_department: "",
+            department_email: "",
+            created_by: "Enfermería",
+            original_department: "Reporte de Enfermería",
+            status: "1"
+          })
         });
-      }
-      for (let m = 0; m < 7; m++) {
-        const date = new Date(endYear, m, 1);
-        arr.push({
-          value: `${endYear}-${String(m + 1).padStart(2, "0")}`,
-          label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
+        const created = await createRes.json();
+
+        if (!createRes.ok || !created?.success) {
+          alert(created?.error || "No se pudo registrar el reporte.");
+          setSending(false);
+          return;
+        }
+
+        const folio = created.folioNumber || String(created.ticketId).padStart(5, "0");
+        const subject = `Reporte de Enfermería — Folio ${folio}`;
+        const html = `
+          <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111827;">
+            <h2 style="color:#065f46;margin-bottom:8px;">Reporte de Enfermería</h2>
+            <p style="margin: 0 0 10px 0;">Folio: <strong>${folio}</strong></p>
+            <p style="margin: 0 0 10px 0;">Plantel: <strong>${selectedCampus}</strong></p>
+            <p style="margin: 0 0 10px 0;">Alumno: <strong>${studentName}</strong></p>
+            <p style="margin: 0 0 10px 0;">Padre/Madre/Tutor: <strong>${parentName}</strong></p>
+            <hr style="border:0;border-top:1px solid #e5e7eb;margin:16px 0"/>
+            <h3 style="margin:0 0 8px 0;">Observaciones</h3>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">${report.replace(/\n/g, "<br/>")}</div>
+            ${actions ? `
+              <h3 style="margin:16px 0 8px 0;">Acciones / Recomendaciones</h3>
+              <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">${actions.replace(/\n/g, "<br/>")}</div>
+            ` : ""}
+            <p style="margin-top:16px;color:#6b7280;font-size:12px;">Este mensaje ha sido enviado por Enfermería del plantel. No responda a este correo.</p>
+          </div>
+        `;
+
+        const emailRes = await fetch("/api/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: [parentEmail],
+            subject,
+            html,
+            scope: "nursing"
+          })
         });
-      }
-      return arr;
-    }, [dashSchoolYear]);
 
-    const buildQS = useCallback(() => {
-      let qs = `campus=${encodeURIComponent(selectedCampus)}`;
-      if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
-        qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
-      }
-      if (dashShowAllOpen && dashStatusFilter === "0") {
-        qs += `&showAllOpen=true`;
-      } else if (dashSelectedMonth) {
-        qs += `&month=${encodeURIComponent(dashSelectedMonth)}`;
-      } else if (dashSchoolYear) {
-        qs += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
-      }
-      return qs;
-    }, [selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear]);
+        if (!emailRes.ok) {
+          const t = await emailRes.text();
+          console.warn("[Nursing] email send failed", t.slice(0, 200));
+          alert("Reporte registrado, pero ocurrió un problema al enviar el correo.");
+        } else {
+          alert("Reporte de Enfermería enviado a padres.");
+        }
 
+        // Reset form
+        setParentName("");
+        setParentEmail("");
+        setStudentName("");
+        setReport("");
+        setActions("");
+      } catch (e) {
+        console.error("[Nursing] submit error", e);
+        alert("Error de red al enviar el reporte.");
+      }
+      setSending(false);
+    }
+
+    return (
+      <div className="bg-white p-6 rounded-lg shadow-lg">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-bold text-emerald-600 flex items-center gap-2">
+            <Stethoscope className="w-6 h-6" />
+            Reporte de Enfermería
+          </h2>
+          <div className="text-sm text-gray-500">{campuses.find((c) => c.value === selectedCampus)?.label}</div>
+        </div>
+
+        <div className="mb-4 p-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 text-emerald-900">
+          Esta sección es la única que envía reportes por correo a padres/madres/tutores.
+        </div>
+
+        <SearchStudent
+          students={students}
+          onSelected={(student) => {
+            const pName = student.nombre_padre
+              ? `${student.nombre_padre} ${student.apellido_paterno_padre ?? ""}`.trim()
+              : "";
+            setStudentName(`${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim());
+            setParentName(pName);
+            setParentEmail(student.email_padre || student.email_madre || "");
+          }}
+          placeholder="Buscar estudiante o padre para llenar datos..."
+        />
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-1">
+            <label className="text-sm font-semibold text-gray-700">Alumno</label>
+            <input
+              type="text"
+              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              value={studentName}
+              onChange={(e) => setStudentName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1">
+            <label className="text-sm font-semibold text-gray-700">Padre/Madre/Tutor</label>
+            <input
+              type="text"
+              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              value={parentName}
+              onChange={(e) => setParentName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1 md:col-span-2">
+            <label className="text-sm font-semibold text-gray-700">Correo de contacto (padres)</label>
+            <input
+              type="email"
+              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              value={parentEmail}
+              onChange={(e) => setParentEmail(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1 md:col-span-2">
+            <label className="text-sm font-semibold text-gray-700">Reporte / Observaciones</label>
+            <textarea
+              rows={5}
+              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              value={report}
+              onChange={(e) => setReport(e.target.value)}
+              placeholder="Describa síntomas, incidentes, medidas aplicadas, etc."
+            />
+          </div>
+          <div className="grid gap-1 md:col-span-2">
+            <label className="text-sm font-semibold text-gray-700">Acciones / Recomendaciones (opcional)</label>
+            <textarea
+              rows={4}
+              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              value={actions}
+              onChange={(e) => setActions(e.target.value)}
+              placeholder="Indicaciones para seguimiento en casa, recomendaciones de atención médica, etc."
+            />
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <button
+            onClick={submitNursingReport}
+            disabled={sending}
+            className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-2 disabled:opacity-60"
+          >
+            <Mail className="w-5 h-5" />
+            {sending ? "Enviando..." : "Enviar Reporte a Padres"}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Auto-fetch dashboard and stats whenever filters or plantel change
+  const monthsForSchoolYear = useMemo(() => {
+    if (!dashSchoolYear) return [];
+    const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
+    const arr = [];
+    for (let m = 7; m < 12; m++) {
+      const date = new Date(startYear, m, 1);
+      arr.push({
+        value: `${startYear}-${String(m + 1).padStart(2, "0")}`,
+        label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
+      });
+    }
+    for (let m = 0; m < 7; m++) {
+      const date = new Date(endYear, m, 1);
+      arr.push({
+        value: `${endYear}-${String(m + 1).padStart(2, "0")}`,
+        label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
+      });
+    }
+    return arr;
+  }, [dashSchoolYear]);
+
+  const buildDashboardQS = useCallback(() => {
+    let qs = `campus=${encodeURIComponent(selectedCampus)}`;
+    if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
+      qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
+    }
+    if (dashShowAllOpen && dashStatusFilter === "0") {
+      qs += `&showAllOpen=true`;
+    } else if (dashSelectedMonth) {
+      qs += `&month=${encodeURIComponent(dashSelectedMonth)}`;
+    } else if (dashSchoolYear) {
+      qs += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
+    }
+    return qs;
+  }, [selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear]);
+
+  useEffect(() => {
+    let abort = false;
     async function fetchDashboard() {
-      if (inflight) return;
-      setInflight(true);
       setKpiLoading(true);
       setDashLoadError("");
       try {
-        const url = `/api/dashboard?${buildQS()}`;
-        console.log("[Dashboard] manual fetch", { url });
+        const url = `/api/dashboard?${buildDashboardQS()}`;
+        console.log("[Dashboard] auto fetch", { url });
         const res = await fetch(url, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        if (abort) return;
+        if (res.status === 204) {
+          // throttled; keep previous data
+          setKpiLoading(false);
+          return;
+        }
         if (!res.ok) {
           const t = await res.text().catch(() => "");
           console.warn("[Dashboard] not ok", res.status, t.slice(0, 200));
           setTickets([]);
           setDashLoadError("No se pudo cargar la información.");
           setKpiLoading(false);
-          setInflight(false);
           return;
         }
         const data = await res.json();
@@ -1178,14 +1331,23 @@ export default function ParentAttentionSystem() {
         }
         setDashLastLoadedAt(new Date());
       } catch (e) {
-        console.error("[Dashboard] fetch error", e);
-        setDashLoadError("Error de red.");
-        setTickets([]);
+        if (!abort) {
+          console.error("[Dashboard] fetch error", e);
+          setDashLoadError("Error de red.");
+          setTickets([]);
+        }
       }
-      setKpiLoading(false);
-      setInflight(false);
+      if (!abort) setKpiLoading(false);
     }
+    // Only auto-fetch on dashboard view
+    if (currentView === "dashboard") {
+      fetchDashboard();
+    }
+    return () => { abort = true; };
+  }, [currentView, selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear, buildDashboardQS]);
 
+  useEffect(() => {
+    let abort = false;
     async function fetchDistribution() {
       setDistLoading(true);
       try {
@@ -1197,41 +1359,33 @@ export default function ParentAttentionSystem() {
             distUrl += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
           }
         }
-        console.log("[Dashboard] manual fetch distribution", { distUrl });
+        console.log("[Dashboard] auto fetch distribution", { distUrl });
         const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        if (abort) return;
         const data = await res.json();
         setDistStats(Array.isArray(data) ? data : []);
       } catch (err) {
-        console.error("Error fetching distribution stats:", err);
+        if (!abort) console.error("Error fetching distribution stats:", err);
       }
-      setDistLoading(false);
+      if (!abort) setDistLoading(false);
     }
+    if (currentView === "dashboard" && showStats) {
+      fetchDistribution();
+    }
+    return () => { abort = true; };
+  }, [currentView, showStats, selectedCampus, dashShowAllOpen, dashStatusFilter, dashSelectedMonth, dashSchoolYear]);
 
+  const Dashboard = () => {
     const filteredTickets = tickets;
 
     return (
       <div className="p-6">
-        <h1 className="text-4xl font-bold text-center text-orange-500 mb-8">
+        <h1 className="text-3xl font-extrabold text-center text-orange-600 mb-6 tracking-tight">
           Mapa de Seguimiento de Fichas
         </h1>
 
         <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
           <div className="flex flex-col lg:flex-row lg:flex-wrap gap-4 mb-6">
-            <div className="flex items-center gap-3">
-              <label className="font-semibold text-gray-700">Plantel:</label>
-              <select
-                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-w-64"
-                value={selectedCampus}
-                onChange={(e) => setSelectedCampus(e.target.value)}
-              >
-                {campuses.map((campus) => (
-                  <option key={campus.value} value={campus.value}>
-                    {campus.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             <div className="flex items-center gap-3">
               <label className="font-semibold text-gray-700">Ciclo Escolar:</label>
               <select
@@ -1258,7 +1412,7 @@ export default function ParentAttentionSystem() {
                 onChange={(e) => setDashSelectedMonth(e.target.value)}
               >
                 <option value="">Todos</option>
-                {months.map((month) => (
+                {monthsForSchoolYear.map((month) => (
                   <option key={month.value} value={month.value}>
                     {month.label}
                   </option>
@@ -1321,15 +1475,6 @@ export default function ParentAttentionSystem() {
 
             <div className="flex gap-2">
               <button
-                onClick={async () => {
-                  await fetchDashboard();
-                }}
-                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 flex items-center gap-2 shadow transition-all"
-              >
-                <RefreshCw className={`w-5 h-5 ${inflight ? "animate-spin" : ""}`} />
-                Cargar/Actualizar
-              </button>
-              <button
                 onClick={() => setShowStats((s) => !s)}
                 className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 flex items-center gap-2 shadow transition-all"
               >
@@ -1356,11 +1501,11 @@ export default function ParentAttentionSystem() {
           <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
             <span className="font-semibold">Filtros:</span>
             {dashSelectedMonth
-              ? ` Mes: ${months.find((m) => m.value === dashSelectedMonth)?.label}`
+              ? ` Mes: ${monthsForSchoolYear.find((m) => m.value === dashSelectedMonth)?.label}`
               : ` Ciclo: ${dashSchoolYear}`}
             {dashLastLoadedAt && (
               <span className="ml-3 text-blue-700">
-                Última carga: {dashLastLoadedAt.toLocaleString("es-MX")}
+                Última actualización: {dashLastLoadedAt.toLocaleString("es-MX")}
               </span>
             )}
           </div>
@@ -1395,13 +1540,7 @@ export default function ParentAttentionSystem() {
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-lg text-gray-800">Distribución por Departamento</h3>
-              <button
-                onClick={fetchDistribution}
-                className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2"
-              >
-                <BarChart3 className={`w-4 h-4 ${distLoading ? "animate-pulse" : ""}`} />
-                {distLoading ? "Cargando..." : "Cargar estadísticas"}
-              </button>
+              <div className="text-sm text-gray-500">{distLoading ? "Cargando..." : "Actualizado automáticamente"}</div>
             </div>
             {distStats.length > 0 ? (
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1419,7 +1558,7 @@ export default function ParentAttentionSystem() {
               </div>
             ) : (
               <div className="p-4 bg-white rounded border text-gray-600">
-                No hay datos. Presiona "Cargar estadísticas".
+                No hay datos para los filtros seleccionados.
               </div>
             )}
           </div>
@@ -1433,8 +1572,7 @@ export default function ParentAttentionSystem() {
           <div className="text-center py-16 bg-white rounded-lg shadow">
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 text-lg">
-              No hay fichas {dashStatusFilter === "0" ? "abiertas" : "cerradas"}
-              {dashShowAllOpen ? " en este plantel" : " con los filtros seleccionados"} — usa "Cargar/Actualizar" para consultar.
+              No hay fichas {dashStatusFilter === "0" ? "abiertas" : "cerradas"} con los filtros seleccionados.
             </p>
           </div>
         ) : (
@@ -1558,62 +1696,92 @@ export default function ParentAttentionSystem() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <nav className="bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg">
+      <nav className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-200">
         <div className="max-w-screen-xl mx-auto px-4">
-          <div className="flex justify-between items-center py-4">
-            <h1 className="text-3xl font-bold">SAPF - Sistema de Atención</h1>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setCurrentView("dashboard")}
-                className={`px-5 py-2 rounded-lg font-medium transition-all ${
-                  currentView === "dashboard"
-                    ? "bg-white text-orange-500 shadow-lg"
-                    : "hover:bg-orange-400"
-                }`}
-              >
-                <TrendingUp className="inline w-5 h-5 mr-2" />
-                Dashboard
-              </button>
-              <button
-                onClick={() => setCurrentView("form")}
-                className={`px-5 py-2 rounded-lg font-medium transition-all ${
-                  currentView === "form"
-                    ? "bg-white text-orange-500 shadow-lg"
-                    : "hover:bg-orange-400"
-                }`}
-              >
-                <FileText className="inline w-5 h-5 mr-2" />
-                Nueva Ficha
-              </button>
-              <button
-                onClick={() => setCurrentView("departments")}
-                className={`px-5 py-2 rounded-lg font-medium transition-all ${
-                  currentView === "departments"
-                    ? "bg-white text-orange-500 shadow-lg"
-                    : "hover:bg-orange-400"
-                }`}
-              >
-                <Users className="inline w-5 h-5 mr-2" />
-                Departamentos
-              </button>
-              <a
-                href="/compare"
-                className="px-5 py-2 rounded-lg font-medium transition-all hover:bg-orange-400"
-              >
-                <TrendingUp className="inline w-5 h-5 mr-2" />
-                Comparar Planteles
-              </a>
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:justify-between sm:items-center py-3">
+            <div className="flex items-center gap-3">
+              <div className="text-xl sm:text-2xl font-extrabold text-orange-600 tracking-tight">
+                SAPF
+              </div>
+              <div className="hidden sm:block text-gray-400">•</div>
+              <div className="text-sm sm:text-base text-gray-700">Sistema de Atención a Padres de Familia</div>
             </div>
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-700">Plantel</label>
+              <select
+                className="p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
+                value={selectedCampus}
+                onChange={(e) => setSelectedCampus(e.target.value)}
+              >
+                {campuses.map((campus) => (
+                  <option key={campus.value} value={campus.value}>
+                    {campus.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 pb-3">
+            <button
+              onClick={() => setCurrentView("dashboard")}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                currentView === "dashboard"
+                  ? "bg-orange-600 text-white shadow"
+                  : "bg-orange-50 text-orange-700 hover:bg-orange-100"
+              }`}
+            >
+              <TrendingUp className="inline w-5 h-5 mr-2" />
+              Dashboard
+            </button>
+            <button
+              onClick={() => setCurrentView("form")}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                currentView === "form"
+                  ? "bg-blue-600 text-white shadow"
+                  : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+              }`}
+            >
+              <FileText className="inline w-5 h-5 mr-2" />
+              Nueva Ficha
+            </button>
+            <button
+              onClick={() => setCurrentView("departments")}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                currentView === "departments"
+                  ? "bg-indigo-600 text-white shadow"
+                  : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+              }`}
+            >
+              <Users className="inline w-5 h-5 mr-2" />
+              Departamentos
+            </button>
+            <button
+              onClick={() => setCurrentView("nursing")}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                currentView === "nursing"
+                  ? "bg-emerald-600 text-white shadow"
+                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+              }`}
+            >
+              <Stethoscope className="inline w-5 h-5 mr-2" />
+              Reporte de Enfermería
+            </button>
+            <a
+              href="/compare"
+              className="px-4 py-2 rounded-lg font-medium transition-all bg-orange-50 text-orange-700 hover:bg-orange-100"
+            >
+              <TrendingUp className="inline w-5 h-5 mr-2" />
+              Comparar Planteles
+            </a>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-screen-xl mx-auto py-8 px-4">
-        <div className="mb-4"></div>
-
+      <main className="max-w-screen-xl mx-auto py-6 px-4">
         {currentView === "dashboard" && <Dashboard />}
         {currentView === "form" && <TicketForm />}
         {currentView === "departments" && <DepartmentManager />}
+        {currentView === "nursing" && <NursingReport />}
       </main>
 
       <Overlay
@@ -1633,8 +1801,6 @@ export default function ParentAttentionSystem() {
                   setFollowTicket(data);
                 }
               } catch { /* ignore */ }
-              // Inform user they can refresh manually
-              refreshTicketsAndKpi();
             }}
           />
         ) : (

@@ -19,6 +19,26 @@ function parseCookie(header) {
   return out;
 }
 
+function splitEmails(input) {
+  if (!input) return [];
+  if (Array.isArray(input)) return input.filter(Boolean).map((s) => String(s).trim()).filter(Boolean);
+  return String(input)
+    .split(/[,;]+/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function domainOf(email) {
+  const m = String(email).toLowerCase().match(/^[^@]+@([^@]+)$/);
+  return m ? m[1] : "";
+}
+
+function isInternalEmail(email, allowedDomains) {
+  const d = domainOf(email);
+  if (!d) return false;
+  return allowedDomains.includes(d);
+}
+
 export async function POST(request, context = { params: {} }) {
   const params = await context.params;
   try {
@@ -32,7 +52,8 @@ export async function POST(request, context = { params: {} }) {
       attachments,
       data,
       template,
-      from: fromParam
+      from: fromParam,
+      scope
     } = body || {};
 
     console.log("[api/send-email][POST] received fields:", {
@@ -40,7 +61,8 @@ export async function POST(request, context = { params: {} }) {
       hasSubject: Boolean(subject),
       hasHtml: Boolean(html || message),
       hasTemplate: Boolean(template),
-      hasAttachments: Array.isArray(attachments) ? attachments.length : 0
+      hasAttachments: Array.isArray(attachments) ? attachments.length : 0,
+      scope
     });
 
     if (!to || !subject || !(html || message)) {
@@ -63,8 +85,38 @@ export async function POST(request, context = { params: {} }) {
       return NextResponse.json({ error: "Falta remitente (from)" }, { status: 400 });
     }
 
+    const recipients = splitEmails(to);
+
+    // Internal email guard: only allow external recipients for nursing scope.
+    const allowedDomains = (process.env.INTERNAL_EMAIL_DOMAINS || process.env.AUTH_ALLOWED_DOMAINS || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
+    // If no allowed domains configured, we default to blocking all external recipients (fail closed),
+    // unless this is explicitly a nursing scope request.
+    const isNursingScope = scope === "nursing";
+    if (!isNursingScope) {
+      if (allowedDomains.length === 0) {
+        // Block everything to be safe
+        console.warn("[api/send-email] No INTERNAL_EMAIL_DOMAINS configured; blocking non-nursing outbound email.");
+        return NextResponse.json(
+          { error: "Envío de correos externos deshabilitado. Solo permitido para Reporte de Enfermería." },
+          { status: 403 }
+        );
+      }
+      const invalid = recipients.filter((r) => !isInternalEmail(r, allowedDomains));
+      if (invalid.length > 0) {
+        console.warn("[api/send-email] Blocking external recipients on non-nursing scope:", invalid);
+        return NextResponse.json(
+          { error: "Destinatarios externos no permitidos en esta sección.", invalid },
+          { status: 403 }
+        );
+      }
+    }
+
     const payload = {
-      to,
+      to: recipients,
       alias: alias || sessionName || "SAPF",
       subject,
       html: html || message || "",
@@ -75,7 +127,10 @@ export async function POST(request, context = { params: {} }) {
       from
     };
 
-    console.log("[api/send-email] forwarding to external service. to:", Array.isArray(to) ? to.length : 1);
+    console.log("[api/send-email] forwarding to external service", {
+      scope: isNursingScope ? "nursing" : "internal-only",
+      toCount: recipients.length
+    });
 
     const upstreamRes = await fetch("https://observaciones.casitaapps.com/sendEmail", {
       method: "POST",
@@ -92,13 +147,13 @@ export async function POST(request, context = { params: {} }) {
     if (!ok) {
       return new NextResponse(
         JSON.stringify({ error: "Upstream email send failed", status: upstreamRes.status, detail: text.slice(0, 300) }),
-        { status: 502, headers: { "Content-Type": "application/json; charset=utf-8" } }
+        { status: 502, headers: { "Content-Type": "application/json; charset=utf-8", "x-email-scope": isNursingScope ? "nursing" : "internal" } }
       );
     }
 
     return new NextResponse(
       JSON.stringify({ ok: true, message: "Email sent successfully", upstreamStatus: upstreamRes.status }),
-      { status: 200, headers: { "Content-Type": "application/json; charset=utf-8" } }
+      { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "x-email-scope": isNursingScope ? "nursing" : "internal" } }
     );
   } catch (error) {
     console.error("[api/send-email][POST] error:", error);
