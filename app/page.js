@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import Overlay from "@/components/overlay";
 
-// Small helper to visually indicate any ongoing backend operation (global)
+// Global activity progress bar
 function TopActivityBar({ active }) {
   return (
     <div className={`fixed top-0 left-0 right-0 z-50 h-1 ${active ? "opacity-100" : "opacity-0"} transition-opacity`}>
@@ -39,39 +39,58 @@ function TopActivityBar({ active }) {
   );
 }
 
-// Reusable chips input with suggestions for CC emails (internal-only)
+function displayLabel(email, name) {
+  const e = String(email || "");
+  const n = String(name || "").trim();
+  if (n) return `${n} <${e}>`;
+  return e;
+}
+
+// Email chips component with name-aware suggestions
 function EmailChips({ value, onChange, suggestions = [] }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
 
-  const add = (email) => {
-    const next = Array.from(new Set([...(value || []), String(email || "").trim()])).filter(Boolean);
+  const addEmail = (email) => {
+    const cleaned = String(email || "").trim().toLowerCase();
+    if (!cleaned) return;
+    const next = Array.from(new Set([...(value || []), cleaned]));
     onChange?.(next);
     setInput("");
     setOpen(false);
   };
-  const remove = (email) => {
-    const next = (value || []).filter((e) => e.toLowerCase() !== email.toLowerCase());
+  const removeEmail = (email) => {
+    const cleaned = String(email || "").trim().toLowerCase();
+    const next = (value || []).filter((e) => e.toLowerCase() !== cleaned);
     onChange?.(next);
   };
 
   const filtered = useMemo(() => {
-    if (!input) return suggestions;
+    const arr = Array.isArray(suggestions) ? suggestions : [];
+    if (!input) return arr;
     const q = input.toLowerCase();
-    return suggestions.filter((s) => s.toLowerCase().includes(q));
+    return arr.filter((s) => (s.name || "").toLowerCase().includes(q) || (s.email || "").toLowerCase().includes(q));
   }, [input, suggestions]);
 
+  const resolveSuggestion = (email) => {
+    const e = String(email || "").toLowerCase();
+    return (suggestions || []).find((s) => String(s.email || "").toLowerCase() === e) || null;
+    };
   return (
     <div className="w-full">
       <div className="flex flex-wrap gap-2 items-center rounded border border-blue-200 bg-blue-50 p-2">
-        {(value || []).map((email) => (
-          <span key={email} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-600 text-white text-xs">
-            {email}
-            <button onClick={() => remove(email)} className="ml-1 hover:text-blue-200" aria-label="Quitar">
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        ))}
+        {(value || []).map((email) => {
+          const sug = resolveSuggestion(email);
+          return (
+            <span key={email} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-blue-600 text-white text-xs">
+              <span className="font-medium">{sug?.name || email}</span>
+              <span className="opacity-80">&lt;{email}&gt;</span>
+              <button onClick={() => removeEmail(email)} className="ml-1 hover:text-blue-200" aria-label="Quitar">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          );
+        })}
         <input
           type="email"
           value={input}
@@ -82,7 +101,7 @@ function EmailChips({ value, onChange, suggestions = [] }) {
         />
         <button
           className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
-          onClick={() => input && add(input)}
+          onClick={() => input && addEmail(input)}
         >
           <Plus className="w-3 h-3" />
           Agregar
@@ -92,11 +111,12 @@ function EmailChips({ value, onChange, suggestions = [] }) {
         <div className="mt-1 max-h-40 overflow-auto rounded border border-blue-200 bg-white shadow">
           {filtered.map((s) => (
             <div
-              key={s}
-              className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer"
-              onClick={() => add(s)}
+              key={s.email}
+              className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex items-center gap-2"
+              onClick={() => addEmail(s.email)}
             >
-              {s}
+              <span className="font-medium">{s.name || s.email}</span>
+              <span className="text-gray-500">&lt;{s.email}&gt;</span>
             </div>
           ))}
         </div>
@@ -105,7 +125,7 @@ function EmailChips({ value, onChange, suggestions = [] }) {
   );
 }
 
-// Reusable student search, used by Ticket and Nursing forms; shows lazy-loaded photo
+// Student search with lazy photo
 function SearchStudent({ students, onSelected, placeholder = "Buscar estudiante o padre (mínimo 3 caracteres)..." }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [results, setResults] = useState([]);
@@ -246,7 +266,6 @@ export default function ParentAttentionSystem() {
     status: "0",
     selectedDepartment: "",
     existingOpenTicketId: null,
-    // UI enrichments
     studentPhotoUrl: "",
     ccEmails: []
   });
@@ -315,7 +334,7 @@ export default function ParentAttentionSystem() {
     return () => { mounted = false; };
   }, [trackAsync]);
 
-  // Fetch helpers gated by view
+  // Fetch students by campus
   const fetchStudentData = useCallback(async (campus) => {
     await trackAsync(async () => {
       try {
@@ -352,6 +371,7 @@ export default function ParentAttentionSystem() {
     return names.sort((a, b) => a.localeCompare(b, "es"))[0];
   }
 
+  // Fetch departments for campus, enriched with display names
   const fetchDepartments = useCallback(async () => {
     await trackAsync(async () => {
       try {
@@ -440,6 +460,24 @@ export default function ParentAttentionSystem() {
     });
   };
 
+  // Suggestions compiled from departments (email and supervisor), enriched with names from departments API
+  const internalEmailSuggestions = useMemo(() => {
+    const list = [];
+    for (const [_, arr] of Object.entries(departments || {})) {
+      for (const r of arr) {
+        if (r?.email) list.push({ email: r.email, name: r.email_display_name || "" });
+        if (r?.supervisor_email) list.push({ email: r.supervisor_email, name: r.supervisor_display_name || "" });
+      }
+    }
+    // de-dup by email
+    const map = new Map();
+    for (const item of list) {
+      const key = String(item.email || "").toLowerCase();
+      if (!map.has(key)) map.set(key, item);
+    }
+    return Array.from(map.values());
+  }, [departments]);
+
   const submitTicket = async () => {
     if (!formData.parentName || !formData.reason || !formData.resolution) {
       alert("Por favor complete todos los campos requeridos");
@@ -449,7 +487,6 @@ export default function ParentAttentionSystem() {
     await trackAsync(async () => {
       try {
         const departmentEmail = departments[formData.selectedDepartment]?.[0]?.email || "";
-        const supervisorEmail = departments[formData.selectedDepartment]?.[0]?.supervisor_email || "";
 
         const response = await fetch("/api/tickets", {
           method: "POST",
@@ -490,7 +527,7 @@ export default function ParentAttentionSystem() {
             noAppointment: false,
             targetDepartment: "",
             status: "0",
-            selectedDepartment: chooseDefaultOriginDepartment(departments) || "Enfermería",
+            selectedDepartment: Object.keys(departments)[0] || "Enfermería",
             existingOpenTicketId: null,
             studentPhotoUrl: "",
             ccEmails: []
@@ -533,7 +570,7 @@ export default function ParentAttentionSystem() {
 
   function holderDisplayFor(deptName) {
     const entry = departments?.[deptName]?.[0] || {};
-    const cand =
+    const name =
       entry.responsable_name ||
       entry.display_name ||
       entry.in_charge_name ||
@@ -542,23 +579,13 @@ export default function ParentAttentionSystem() {
       entry.supervisor_name ||
       entry.name ||
       entry.full_name ||
-      entry.supervisor_email ||
-      entry.email ||
+      entry.supervisor_display_name ||
+      entry.email_display_name ||
       "";
-    return String(cand);
+    const email = entry.email || "";
+    const label = displayLabel(email, name);
+    return label;
   }
-
-  // Build internal email suggestions from departments map (emails and supervisors)
-  const internalEmailSuggestions = useMemo(() => {
-    const list = [];
-    for (const [_, arr] of Object.entries(departments || {})) {
-      for (const r of arr) {
-        if (r?.email) list.push(r.email);
-        if (r?.supervisor_email) list.push(r.supervisor_email);
-      }
-    }
-    return Array.from(new Set(list));
-  }, [departments]);
 
   const FollowupForm = ({ ticket, depts, onSaved }) => {
     const [resolution, setResolution] = useState("");
@@ -570,8 +597,11 @@ export default function ParentAttentionSystem() {
 
     const deptOptions = useMemo(() => Object.keys(depts || {}), [depts]);
 
-    const deptEmail = (depts?.[targetDepartment]?.[0]?.email) || "";
-    const supEmail = (depts?.[targetDepartment]?.[0]?.supervisor_email) || "";
+    const deptRec = depts?.[targetDepartment]?.[0] || {};
+    const deptEmail = deptRec.email || "";
+    const deptName = deptRec.email_display_name || "";
+    const supEmail = deptRec.supervisor_email || "";
+    const supName = deptRec.supervisor_display_name || "";
 
     async function submitFollowup() {
       setError("");
@@ -685,11 +715,21 @@ export default function ParentAttentionSystem() {
         </div>
 
         <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          Un correo será enviado a: <strong>{deptEmail || "—"}</strong>
-          {supEmail ? <> y copia a su supervisor: <strong>{supEmail}</strong></> : <> (sin supervisor configurado)</>}
+          Un correo será enviado a: <strong>{displayLabel(deptEmail, deptName) || "—"}</strong>
+          {supEmail ? <> y copia a su supervisor: <strong>{displayLabel(supEmail, supName)}</strong></> : <> (sin supervisor configurado)</>}
           <div className="mt-2">
             Correos adicionales (internos):
-            <EmailChips value={ccEmails} onChange={setCcEmails} suggestions={internalEmailSuggestions} />
+            <EmailChips value={ccEmails} onChange={setCcEmails} suggestions={
+              Object.values(depts || {}).flat().map((r) => ({
+                email: r.email,
+                name: r.email_display_name || ""
+              })).concat(
+                Object.values(depts || {}).flat().map((r) => ({
+                  email: r.supervisor_email,
+                  name: r.supervisor_display_name || ""
+                }))
+              ).filter((x) => x.email)
+            } />
           </div>
         </div>
 
@@ -736,7 +776,6 @@ export default function ParentAttentionSystem() {
   };
 
   const TicketCard = ({ ticket }) => {
-    // Visual card with a decorative student silhouette if no photo (no photo in ticket payload by default)
     return (
       <div className="bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow">
         <div className="p-6">
@@ -882,8 +921,11 @@ export default function ParentAttentionSystem() {
     }, [departments]);
 
     // Mandatory recipients preview when canalizing
-    const canalizadoEmail = departments[formData.targetDepartment]?.[0]?.email || "";
-    const canalizadoSup = departments[formData.targetDepartment]?.[0]?.supervisor_email || "";
+    const canalizadoRec = departments[formData.targetDepartment]?.[0] || {};
+    const canalizadoEmail = canalizadoRec.email || "";
+    const canalizadoName = canalizadoRec.email_display_name || "";
+    const canalizadoSup = canalizadoRec.supervisor_email || "";
+    const canalizadoSupName = canalizadoRec.supervisor_display_name || "";
 
     return (
       <div className="bg-white p-6 rounded-lg shadow-lg">
@@ -1075,11 +1117,11 @@ export default function ParentAttentionSystem() {
             >
               <option value="">Sin canalización</option>
               {Object.keys(departments).map((d) => {
-                const holder = holderDisplayFor(d);
-                const label = holder ? `${d} — ${holder}` : d;
+                const entry = departments[d]?.[0] || {};
+                const label = displayLabel(entry.email || "", entry.email_display_name || "") || d;
                 return (
                   <option key={d} value={d}>
-                    {label}
+                    {d} {entry.email ? `— ${label}` : ""}
                   </option>
                 );
               })}
@@ -1102,8 +1144,8 @@ export default function ParentAttentionSystem() {
             <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
               {formData.targetDepartment ? (
                 <>
-                  Un correo será enviado a: <strong>{canalizadoEmail || "—"}</strong>
-                  {canalizadoSup ? <> y copia al supervisor: <strong>{canalizadoSup}</strong></> : <> (sin supervisor configurado)</>}
+                  Un correo será enviado a: <strong>{displayLabel(canalizadoEmail, canalizadoName) || "—"}</strong>
+                  {canalizadoSup ? <> y copia al supervisor: <strong>{displayLabel(canalizadoSup, canalizadoSupName)}</strong></> : <> (sin supervisor configurado)</>}
                   <div className="mt-2">
                     Correos adicionales (internos):
                     <EmailChips
@@ -1695,95 +1737,102 @@ export default function ParentAttentionSystem() {
         </div>
 
         <div className="grid gap-4">
-          {Object.entries(departments).map(([deptName, deptData]) => (
-            <div
-              key={deptName}
-              className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="font-semibold text-lg mb-3 text-gray-800">
-                    {deptName}
+          {Object.entries(departments).map(([deptName, deptData]) => {
+            const rec = deptData?.[0] || {};
+            const deptEmail = rec.email || "";
+            const deptNameDisp = rec.email_display_name || "";
+            const supEmail = rec.supervisor_email || "";
+            const supName = rec.supervisor_display_name || "";
+            return (
+              <div
+                key={deptName}
+                className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="font-semibold text-lg mb-3 text-gray-800">
+                      {deptName}
+                    </div>
+                    {editingDept === deptName ? (
+                      <div className="grid gap-3">
+                        <div>
+                          <label className="text-sm text-gray-600">
+                            Email del departamento
+                          </label>
+                          <input
+                            type="email"
+                            placeholder="Email del departamento"
+                            className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500"
+                            defaultValue={deptEmail}
+                            onChange={(e) =>
+                              setEditData({ ...editData, email: e.target.value })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm text-gray-600">
+                            Email del supervisor
+                          </label>
+                          <input
+                            type="email"
+                            placeholder="Email del supervisor"
+                            className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500"
+                            defaultValue={supEmail}
+                            onChange={(e) =>
+                              setEditData({
+                                ...editData,
+                                supervisor: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() =>
+                              updateDepartment(
+                                deptName,
+                                editData.email || deptEmail,
+                                editData.supervisor || supEmail
+                              )
+                            }
+                            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 flex items-center gap-2"
+                          >
+                            <Check className="w-4 h-4" />
+                            Guardar
+                          </button>
+                          <button
+                            onClick={() => setEditingDept(null)}
+                            className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <div>
+                          <span className="font-medium">Departamento:</span>{" "}
+                          {displayLabel(deptEmail, deptNameDisp) || "—"}
+                        </div>
+                        <div>
+                          <span className="font-medium">Supervisor:</span>{" "}
+                          {displayLabel(supEmail, supName) || "—"}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  {editingDept === deptName ? (
-                    <div className="grid gap-3">
-                      <div>
-                        <label className="text-sm text-gray-600">
-                          Email del departamento
-                        </label>
-                        <input
-                          type="email"
-                          placeholder="Email del departamento"
-                          className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500"
-                          defaultValue={deptData[0]?.email}
-                          onChange={(e) =>
-                            setEditData({ ...editData, email: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm text-gray-600">
-                          Email del supervisor
-                        </label>
-                        <input
-                          type="email"
-                          placeholder="Email del supervisor"
-                          className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500"
-                          defaultValue={deptData[0]?.supervisor_email}
-                          onChange={(e) =>
-                            setEditData({
-                              ...editData,
-                              supervisor: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() =>
-                            updateDepartment(
-                              deptName,
-                              editData.email || deptData[0]?.email,
-                              editData.supervisor || deptData[0]?.supervisor_email
-                            )
-                          }
-                          className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 flex items-center gap-2"
-                        >
-                          <Check className="w-4 h-4" />
-                          Guardar
-                        </button>
-                        <button
-                          onClick={() => setEditingDept(null)}
-                          className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-600">
-                      <div className="mb-2">
-                        <span className="font-medium">Email:</span>{" "}
-                        {deptData[0]?.email}
-                      </div>
-                      <div>
-                        <span className="font-medium">Supervisor:</span>{" "}
-                        {deptData[0]?.supervisor_email}
-                      </div>
-                    </div>
+                  {!editingDept && (
+                    <button
+                      onClick={() => setEditingDept(deptName)}
+                      className="ml-4 p-2 text-blue-600 hover:bg-blue-50 rounded"
+                    >
+                      <Edit2 className="w-5 h-5" />
+                    </button>
                   )}
                 </div>
-                {!editingDept && (
-                  <button
-                    onClick={() => setEditingDept(deptName)}
-                    className="ml-4 p-2 text-blue-600 hover:bg-blue-50 rounded"
-                  >
-                    <Edit2 className="w-5 h-5" />
-                  </button>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );

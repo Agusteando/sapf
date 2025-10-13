@@ -1,6 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
+import { getDisplayNames } from "@/lib/googleDirectory";
 
 export async function GET(request, context = { params: {} }) {
   const params = await context.params;
@@ -13,12 +14,14 @@ export async function GET(request, context = { params: {} }) {
       [campus]
     );
 
-    const exists = (Array.isArray(rows) ? rows : []).some(
+    const list = Array.isArray(rows) ? rows : [];
+
+    const exists = list.some(
       (r) => String(r.department_name || "").trim().toLowerCase() === "enfermería"
     );
 
     if (!exists) {
-      rows.push({
+      list.push({
         campus,
         department_name: "Enfermería",
         email: "",
@@ -27,8 +30,21 @@ export async function GET(request, context = { params: {} }) {
       console.log("[api/departments][GET] injected fallback department 'Enfermería' for campus:", campus);
     }
 
-    console.log("[api/departments][GET] rows:", rows?.length ?? 0);
-    return NextResponse.json(rows);
+    // Resolve display names for all present emails
+    const emails = [];
+    for (const r of list) {
+      if (r.email) emails.push(String(r.email).toLowerCase());
+      if (r.supervisor_email) emails.push(String(r.supervisor_email).toLowerCase());
+    }
+    const namesMap = await getDisplayNames(emails);
+    const enriched = list.map((r) => ({
+      ...r,
+      email_display_name: r.email ? (namesMap[String(r.email).toLowerCase()] || "") : "",
+      supervisor_display_name: r.supervisor_email ? (namesMap[String(r.supervisor_email).toLowerCase()] || "") : "",
+    }));
+
+    console.log("[api/departments][GET] rows enriched:", enriched?.length ?? 0);
+    return NextResponse.json(enriched);
   } catch (error) {
     console.error("[api/departments][GET] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
