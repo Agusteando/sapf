@@ -16,14 +16,96 @@ import {
   Check,
   Download,
   BarChart3,
-  Mail,
   CornerDownRight,
-  RefreshCw,
-  Stethoscope
+  Stethoscope,
+  Plus,
+  X,
+  Loader2
 } from "lucide-react";
 import Overlay from "@/components/overlay";
 
-// Reusable student search, used by Ticket and Nursing forms
+// Small helper to visually indicate any ongoing backend operation (global)
+function TopActivityBar({ active }) {
+  return (
+    <div className={`fixed top-0 left-0 right-0 z-50 h-1 ${active ? "opacity-100" : "opacity-0"} transition-opacity`}>
+      <div className="h-1 bg-gradient-to-r from-orange-500 via-fuchsia-500 to-emerald-500 animate-[progress_1.2s_linear_infinite]" />
+      <style jsx>{`
+        @keyframes progress {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// Reusable chips input with suggestions for CC emails (internal-only)
+function EmailChips({ value, onChange, suggestions = [] }) {
+  const [input, setInput] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const add = (email) => {
+    const next = Array.from(new Set([...(value || []), String(email || "").trim()])).filter(Boolean);
+    onChange?.(next);
+    setInput("");
+    setOpen(false);
+  };
+  const remove = (email) => {
+    const next = (value || []).filter((e) => e.toLowerCase() !== email.toLowerCase());
+    onChange?.(next);
+  };
+
+  const filtered = useMemo(() => {
+    if (!input) return suggestions;
+    const q = input.toLowerCase();
+    return suggestions.filter((s) => s.toLowerCase().includes(q));
+  }, [input, suggestions]);
+
+  return (
+    <div className="w-full">
+      <div className="flex flex-wrap gap-2 items-center rounded border border-blue-200 bg-blue-50 p-2">
+        {(value || []).map((email) => (
+          <span key={email} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-600 text-white text-xs">
+            {email}
+            <button onClick={() => remove(email)} className="ml-1 hover:text-blue-200" aria-label="Quitar">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          type="email"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder="Agregar correo (interno)"
+          className="flex-1 bg-transparent outline-none text-sm p-1"
+        />
+        <button
+          className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
+          onClick={() => input && add(input)}
+        >
+          <Plus className="w-3 h-3" />
+          Agregar
+        </button>
+      </div>
+      {open && filtered.length > 0 && (
+        <div className="mt-1 max-h-40 overflow-auto rounded border border-blue-200 bg-white shadow">
+          {filtered.map((s) => (
+            <div
+              key={s}
+              className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer"
+              onClick={() => add(s)}
+            >
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Reusable student search, used by Ticket and Nursing forms; shows lazy-loaded photo
 function SearchStudent({ students, onSelected, placeholder = "Buscar estudiante o padre (mínimo 3 caracteres)..." }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [results, setResults] = useState([]);
@@ -59,36 +141,57 @@ function SearchStudent({ students, onSelected, placeholder = "Buscar estudiante 
         </div>
 
         {results.length > 0 && (
-          <div className="absolute z-10 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-y-auto">
-            {results.map((student, idx) => (
-              <div
-                key={idx}
-                className="p-4 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-colors"
-                onClick={() => {
-                  onSelected?.(student);
-                  setResults([]);
-                  setSearchTerm("");
-                }}
-              >
-                <div className="font-semibold text-lg">
-                  {student.nombres} {student.apellido_paterno}{" "}
-                  {student.apellido_materno}
-                </div>
-                <div className="text-sm text-gray-600 mt-1">
-                  Grado: {student.grado} | Grupo: {student.grupo} | Matrícula:{" "}
-                  {student.matricula}
-                </div>
-                <div className="text-sm text-gray-500 mt-1">
-                  Padre: {student.nombre_padre} {student.apellido_paterno_padre}
-                </div>
-                {Array.isArray(student.siblings) && student.siblings.length > 0 && (
-                  <div className="text-xs text-blue-600 mt-2 flex items-center gap-1">
-                    <Users className="w-3 h-3" />
-                    Hermanos: {student.siblings.map((s) => s.nombres).join(", ")}
+          <div className="absolute z-10 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-96 overflow-y-auto">
+            {results.map((student, idx) => {
+              const photo = student?.matricula?.foto || "";
+              const fullName = `${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim();
+              const parentLine = `Padre: ${student.nombre_padre || ""} ${student.apellido_paterno_padre || ""}`.trim();
+              return (
+                <div
+                  key={idx}
+                  className="p-4 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-colors"
+                  onClick={() => {
+                    onSelected?.(student);
+                    setResults([]);
+                    setSearchTerm("");
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-14 h-14 rounded-full ring-2 ring-emerald-400 overflow-hidden flex-shrink-0">
+                      {photo ? (
+                        <img
+                          src={photo}
+                          alt={fullName}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-lg font-bold">
+                          {(student.nombres || "?").charAt(0)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-base">
+                        {fullName}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Grado: {student.grado} • Grupo: {student.grupo} • Matrícula: {student.matricula?.id || student.matricula || "—"}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {parentLine}
+                      </div>
+                      {Array.isArray(student.siblings) && student.siblings.length > 0 && (
+                        <div className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          Hermanos: {student.siblings.map((s) => s.nombres).join(", ")}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -102,19 +205,32 @@ export default function ParentAttentionSystem() {
   const [tickets, setTickets] = useState([]);
   const [students, setStudents] = useState([]);
   const [departments, setDepartments] = useState({});
-  const [loading, setLoading] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
   const [schoolYears, setSchoolYears] = useState([]);
   const [defaultSchoolYear, setDefaultSchoolYear] = useState("");
 
+  // Global activity tracker
+  const [activeOps, setActiveOps] = useState(0);
+  const trackAsync = useCallback(async (fn) => {
+    setActiveOps((n) => n + 1);
+    try {
+      return await fn();
+    } finally {
+      setActiveOps((n) => Math.max(0, n - 1));
+    }
+  }, []);
+
+  // KPIs and dashboard
   const [kpi, setKpi] = useState({ total: 0, abiertos: 0, cerrados: 0, quejas: 0, avg_resolucion_horas: null });
   const [kpiLoading, setKpiLoading] = useState(false);
   const lastGoodKpiRef = useRef(null);
 
+  // Modals and followups
   const [followModalOpen, setFollowModalOpen] = useState(false);
   const [followTicket, setFollowTicket] = useState(null);
   const [followDepts, setFollowDepts] = useState({});
 
+  // Forms
   const [formData, setFormData] = useState({
     contactMethod: "email",
     isComplaint: false,
@@ -130,9 +246,12 @@ export default function ParentAttentionSystem() {
     status: "0",
     selectedDepartment: "",
     existingOpenTicketId: null,
+    // UI enrichments
+    studentPhotoUrl: "",
+    ccEmails: []
   });
 
-  // Dashboard-specific state
+  // Dashboard state
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
   const [dashSchoolYear, setDashSchoolYear] = useState("");
   const [dashSelectedMonth, setDashSelectedMonth] = useState("");
@@ -140,7 +259,7 @@ export default function ParentAttentionSystem() {
   const [dashLastLoadedAt, setDashLastLoadedAt] = useState(null);
   const [dashLoadError, setDashLoadError] = useState("");
 
-  // Distribution stats (auto fetch when visible)
+  // Stats
   const [showStats, setShowStats] = useState(false);
   const [distStats, setDistStats] = useState([]);
   const [distLoading, setDistLoading] = useState(false);
@@ -165,12 +284,13 @@ export default function ParentAttentionSystem() {
     "Pedagogía Español",
     "Pedagogía Inglés",
     "Artes y Deportes",
+    "Enfermería"
   ];
 
-  // Load school years once (powers the month selector)
+  // Load school years
   useEffect(() => {
     let mounted = true;
-    (async () => {
+    trackAsync(async () => {
       try {
         const r = await fetch("/api/stats/school-years", { cache: "no-store" });
         if (!mounted) return;
@@ -191,33 +311,32 @@ export default function ParentAttentionSystem() {
         setDefaultSchoolYear(fallback[0]);
         setDashSchoolYear((prev) => prev || fallback[0]);
       }
-    })();
+    });
     return () => { mounted = false; };
-  }, []);
+  }, [trackAsync]);
 
-  // Fetch helpers gated by current view
+  // Fetch helpers gated by view
   const fetchStudentData = useCallback(async (campus) => {
-    console.log("[students] fetching for campus:", campus);
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/students/${campus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-      if (!response.ok) {
+    await trackAsync(async () => {
+      try {
+        const response = await fetch(`/api/students/${campus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        if (!response.ok) {
+          setStudents([]);
+        } else {
+          const data = await response.json();
+          const arr = Array.isArray(data?.students) ? data.students : [];
+          setStudents(arr);
+        }
+      } catch (error) {
+        console.error("Error fetching students:", error);
         setStudents([]);
-      } else {
-        const data = await response.json();
-        const arr = Array.isArray(data?.students) ? data.students : [];
-        setStudents(arr);
       }
-    } catch (error) {
-      console.error("Error fetching students:", error);
-      setStudents([]);
-    }
-    setLoading(false);
-  }, []);
+    });
+  }, [trackAsync]);
 
   function chooseDefaultOriginDepartment(grouped) {
     const names = Object.keys(grouped);
-    if (names.length === 0) return "";
+    if (names.length === 0) return "Enfermería";
     const priority = [
       "Control Escolar",
       "Dirección",
@@ -225,6 +344,7 @@ export default function ParentAttentionSystem() {
       "Psicología",
       "Pedagogía Español",
       "Pedagogía Inglés",
+      "Enfermería"
     ];
     for (const p of priority) {
       if (names.includes(p)) return p;
@@ -233,57 +353,66 @@ export default function ParentAttentionSystem() {
   }
 
   const fetchDepartments = useCallback(async () => {
-    console.log("[departments] fetching for campus:", selectedCampus);
-    try {
-      const response = await fetch(`/api/departments/${selectedCampus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-      if (!response.ok) {
-        setDepartments({});
-        setFormData((prev) => ({
-          ...prev,
-          selectedDepartment: prev.selectedDepartment || fallbackDepartmentOptions[0],
-        }));
-        return;
-      }
-      const data = await response.json();
-      const grouped = (Array.isArray(data) ? data : []).reduce((acc, dept) => {
-        if (!acc[dept.department_name]) acc[dept.department_name] = [];
-        acc[dept.department_name].push(dept);
-        return acc;
-      }, {});
-      setDepartments(grouped);
-      setFormData((prev) => {
-        const current = prev.selectedDepartment;
-        const available = Object.keys(grouped);
-        let next = current;
-        if (!current || !available.includes(current)) {
-          next = chooseDefaultOriginDepartment(grouped) || fallbackDepartmentOptions[0];
+    await trackAsync(async () => {
+      try {
+        const response = await fetch(`/api/departments/${selectedCampus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        if (!response.ok) {
+          setDepartments({ Enfermería: [{ email: "", supervisor_email: "", campus: selectedCampus, department_name: "Enfermería" }] });
+          setFormData((prev) => ({
+            ...prev,
+            selectedDepartment: prev.selectedDepartment || "Enfermería",
+          }));
+          return;
         }
-        return { ...prev, selectedDepartment: next };
-      });
-    } catch (error) {
-      console.error("Error fetching departments:", error);
-      setDepartments({});
-    }
-  }, [selectedCampus]);
+        const data = await response.json();
+        const grouped = (Array.isArray(data) ? data : []).reduce((acc, dept) => {
+          if (!acc[dept.department_name]) acc[dept.department_name] = [];
+          acc[dept.department_name].push(dept);
+          return acc;
+        }, {});
+        if (!grouped["Enfermería"]) {
+          grouped["Enfermería"] = [{ email: "", supervisor_email: "", campus: selectedCampus, department_name: "Enfermería" }];
+        }
+        setDepartments(grouped);
+        setFormData((prev) => {
+          const current = prev.selectedDepartment;
+          const available = Object.keys(grouped);
+          let next = current;
+          if (!current || !available.includes(current)) {
+            next = chooseDefaultOriginDepartment(grouped) || "Enfermería";
+          }
+          return { ...prev, selectedDepartment: next };
+        });
+      } catch (error) {
+        console.error("Error fetching departments:", error);
+        setDepartments({ Enfermería: [{ email: "", supervisor_email: "", campus: selectedCampus, department_name: "Enfermería" }] });
+      }
+    });
+  }, [selectedCampus, trackAsync]);
 
   const fetchDepartmentsForCampus = useCallback(async (campusCode) => {
-    try {
-      const response = await fetch(`/api/departments/${encodeURIComponent(campusCode)}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-      if (!response.ok) return {};
-      const data = await response.json();
-      const grouped = (Array.isArray(data) ? data : []).reduce((acc, dept) => {
-        if (!acc[dept.department_name]) acc[dept.department_name] = [];
-        acc[dept.department_name].push(dept);
-        return acc;
-      }, {});
-      return grouped;
-    } catch (e) {
-      console.warn("[app/page] fetchDepartmentsForCampus error", e);
-      return {};
-    }
-  }, []);
+    return trackAsync(async () => {
+      try {
+        const response = await fetch(`/api/departments/${encodeURIComponent(campusCode)}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        if (!response.ok) return { Enfermería: [{ email: "", supervisor_email: "", campus: campusCode, department_name: "Enfermería" }] };
+        const data = await response.json();
+        const grouped = (Array.isArray(data) ? data : []).reduce((acc, dept) => {
+          if (!acc[dept.department_name]) acc[dept.department_name] = [];
+          acc[dept.department_name].push(dept);
+          return acc;
+        }, {});
+        if (!grouped["Enfermería"]) {
+          grouped["Enfermería"] = [{ email: "", supervisor_email: "", campus: campusCode, department_name: "Enfermería" }];
+        }
+        return grouped;
+      } catch (e) {
+        console.warn("[app/page] fetchDepartmentsForCampus error", e);
+        return { Enfermería: [{ email: "", supervisor_email: "", campus: campusCode, department_name: "Enfermería" }] };
+      }
+    });
+  }, [trackAsync]);
 
-  // Load students/departments when entering relevant views or when plantel changes
+  // Load students/departments when entering relevant views or plantel changes
   useEffect(() => {
     if (currentView === "form" || currentView === "nursing") {
       fetchStudentData(selectedCampus);
@@ -295,18 +424,20 @@ export default function ParentAttentionSystem() {
 
   const checkDuplicate = async (parentName) => {
     if (!parentName || parentName.length < 3) return null;
-    try {
-      const response = await fetch(
-        `/api/search-duplicate?parent_name=${encodeURIComponent(parentName)}`,
-        { cache: "no-store", headers: { "x-client": "sapf-app" } }
-      );
-      if (!response.ok) return null;
-      const data = await response.json();
-      return data[0];
-    } catch (error) {
-      console.error("Error checking duplicate:", error);
-      return null;
-    }
+    return trackAsync(async () => {
+      try {
+        const response = await fetch(
+          `/api/search-duplicate?parent_name=${encodeURIComponent(parentName)}`,
+          { cache: "no-store", headers: { "x-client": "sapf-app" } }
+        );
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data[0];
+      } catch (error) {
+        console.error("Error checking duplicate:", error);
+        return null;
+      }
+    });
   };
 
   const submitTicket = async () => {
@@ -315,105 +446,85 @@ export default function ParentAttentionSystem() {
       return;
     }
 
-    try {
-      const departmentEmail =
-        departments[formData.selectedDepartment]?.[0]?.email || "";
+    await trackAsync(async () => {
+      try {
+        const departmentEmail = departments[formData.selectedDepartment]?.[0]?.email || "";
+        const supervisorEmail = departments[formData.selectedDepartment]?.[0]?.supervisor_email || "";
 
-      if (formData.existingOpenTicketId && formData.appendToExisting) {
-        const response = await fetch(`/api/tickets/${formData.existingOpenTicketId}`, {
-          method: "PUT",
+        const response = await fetch("/api/tickets", {
+          method: "POST",
           headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
           body: JSON.stringify({
+            campus: selectedCampus,
+            contact_method: formData.contactMethod,
+            is_complaint: formData.isComplaint ? 1 : 0,
+            parent_name: formData.parentName,
+            student_name: formData.studentName,
+            phone_number: formData.phoneNumber,
+            parent_email: formData.parentEmail,
+            reason: formData.reason,
             resolution: formData.resolution,
-            status: formData.status,
+            appointment_date: formData.noAppointment ? null : formData.appointmentDate,
             target_department: formData.targetDepartment,
+            department_email: departmentEmail,
+            created_by: "Current User",
+            original_department: formData.selectedDepartment || "General",
+            status: formData.status,
+            cc_emails: formData.ccEmails
           }),
         });
+
         const result = await response.json();
-        if (!response.ok || !result?.success) {
-          alert("No se pudo agregar el seguimiento al folio existente.");
-          return;
+        if (response.ok && result.success) {
+          alert(`Ficha generada exitosamente. Folio: ${result.folioNumber}`);
+          setFormData({
+            contactMethod: "email",
+            isComplaint: false,
+            parentName: "",
+            studentName: "",
+            phoneNumber: "",
+            parentEmail: "",
+            reason: "",
+            resolution: "",
+            appointmentDate: new Date().toISOString().slice(0, 16),
+            noAppointment: false,
+            targetDepartment: "",
+            status: "0",
+            selectedDepartment: chooseDefaultOriginDepartment(departments) || "Enfermería",
+            existingOpenTicketId: null,
+            studentPhotoUrl: "",
+            ccEmails: []
+          });
+        } else {
+          alert(result?.error || "No se pudo generar la ficha");
         }
-        alert(`Seguimiento agregado al folio ${String(formData.existingOpenTicketId).padStart(5, "0")}.`);
-        setFormData((prev) => ({
-          ...prev,
-          resolution: "",
-          targetDepartment: "",
-          appendToExisting: false,
-          existingOpenTicketId: null,
-        }));
-        return;
+      } catch (error) {
+        console.error("Error submitting ticket:", error);
+        alert("Error al generar la ficha");
       }
-
-      const response = await fetch("/api/tickets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
-        body: JSON.stringify({
-          campus: selectedCampus,
-          contact_method: formData.contactMethod,
-          is_complaint: formData.isComplaint ? 1 : 0,
-          parent_name: formData.parentName,
-          student_name: formData.studentName,
-          phone_number: formData.phoneNumber,
-          parent_email: formData.parentEmail,
-          reason: formData.reason,
-          resolution: formData.resolution,
-          appointment_date: formData.noAppointment ? null : formData.appointmentDate,
-          target_department: formData.targetDepartment,
-          department_email: departmentEmail,
-          created_by: "Current User",
-          original_department: formData.selectedDepartment || "General",
-          status: formData.status,
-        }),
-      });
-
-      const result = await response.json();
-      if (response.ok && result.success) {
-        alert(`Ficha generada exitosamente. Folio: ${result.folioNumber}`);
-        setFormData({
-          contactMethod: "email",
-          isComplaint: false,
-          parentName: "",
-          studentName: "",
-          phoneNumber: "",
-          parentEmail: "",
-          reason: "",
-          resolution: "",
-          appointmentDate: new Date().toISOString().slice(0, 16),
-          noAppointment: false,
-          targetDepartment: "",
-          status: "0",
-          selectedDepartment: chooseDefaultOriginDepartment(departments) || "",
-          existingOpenTicketId: null,
-          appendToExisting: false,
-        });
-      } else {
-        alert(result?.error || "No se pudo generar la ficha");
-      }
-    } catch (error) {
-      console.error("Error submitting ticket:", error);
-      alert("Error al generar la ficha");
-    }
+    });
   };
 
   const updateDepartment = async (deptName, email, supervisor) => {
-    try {
-      await fetch(`/api/departments/${selectedCampus}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
-        body: JSON.stringify({
-          email,
-          department_name: deptName,
-          supervisor_email: supervisor,
-        }),
-      });
-      alert("Departamento actualizado exitosamente");
-      fetchDepartments();
-      setEditingDept(null);
-    } catch (error) {
-      console.error("Error updating department:", error);
-      alert("Error al actualizar departamento");
-    }
+    await trackAsync(async () => {
+      try {
+        await fetch(`/api/departments/${selectedCampus}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({
+            email,
+            department_name: deptName,
+            supervisor_email: supervisor,
+          }),
+        });
+        alert("Departamento actualizado exitosamente");
+        fetchDepartments();
+        setEditingDept(null);
+      } catch (error) {
+        console.error("Error updating department:", error);
+        alert("Error al actualizar departamento");
+      }
+    });
   };
 
   const exportToExcel = () => {
@@ -437,31 +548,30 @@ export default function ParentAttentionSystem() {
     return String(cand);
   }
 
+  // Build internal email suggestions from departments map (emails and supervisors)
+  const internalEmailSuggestions = useMemo(() => {
+    const list = [];
+    for (const [_, arr] of Object.entries(departments || {})) {
+      for (const r of arr) {
+        if (r?.email) list.push(r.email);
+        if (r?.supervisor_email) list.push(r.supervisor_email);
+      }
+    }
+    return Array.from(new Set(list));
+  }, [departments]);
+
   const FollowupForm = ({ ticket, depts, onSaved }) => {
     const [resolution, setResolution] = useState("");
     const [status, setStatus] = useState(ticket.status || "0");
-    const [targetDepartment, setTargetDepartment] = useState(ticket.target_department || "");
+    const [targetDepartment, setTargetDepartment] = useState(ticket.target_department || ticket.original_department || "");
     const [sending, setSending] = useState(false);
-    const [sendEmail, setSendEmail] = useState(false);
-    // IMPORTANT: default recipients ONLY internal department email; never parent here.
-    const [emailTo, setEmailTo] = useState(() => {
-      const list = [];
-      if (ticket.department_email) list.push(ticket.department_email);
-      return list.join(", ");
-    });
-    const [emailSubject, setEmailSubject] = useState(`Seguimiento al folio ${String(ticket.id).padStart(5, "0")}`);
-    const [emailBody, setEmailBody] = useState(
-      `<p>Se ha registrado un nuevo seguimiento para el folio <strong>${String(ticket.id).padStart(5, "0")}</strong>.</p>
-<p><strong>Plantel:</strong> ${ticket.school_code || ticket.campus || ""}</p>
-<p><strong>Padre/Madre:</strong> ${ticket.parent_name}</p>
-<p><strong>Alumno:</strong> ${ticket.student_name}</p>
-<p><strong>Departamento:</strong> ${targetDepartment || ticket.target_department || ticket.original_department || ""}</p>
-<p><strong>Seguimiento:</strong></p>
-<p>${(resolution || "").replace(/\n/g, "<br/>")}</p>`
-    );
     const [error, setError] = useState("");
+    const [ccEmails, setCcEmails] = useState([]);
 
     const deptOptions = useMemo(() => Object.keys(depts || {}), [depts]);
+
+    const deptEmail = (depts?.[targetDepartment]?.[0]?.email) || "";
+    const supEmail = (depts?.[targetDepartment]?.[0]?.supervisor_email) || "";
 
     async function submitFollowup() {
       setError("");
@@ -470,54 +580,33 @@ export default function ParentAttentionSystem() {
         return;
       }
       setSending(true);
-      try {
-        const res = await fetch(`/api/tickets/${ticket.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
-          body: JSON.stringify({
-            resolution,
-            status,
-            target_department: targetDepartment || ""
-          })
-        });
-        const data = await res.json();
-        if (!res.ok || !data?.success) {
-          setError(data?.error || "No se pudo guardar el seguimiento.");
-          setSending(false);
-          return;
-        }
-
-        if (sendEmail) {
-          const recipients = emailTo
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-          if (recipients.length > 0) {
-            const html = emailBody || `<p>${resolution.replace(/\n/g, "<br/>")}</p>`;
-            const emailRes = await fetch("/api/send-email", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                to: recipients,
-                subject: emailSubject || `Seguimiento al folio ${String(ticket.id).padStart(5, "0")}`,
-                html,
-                scope: "internal" // Explicitly internal; API enforces internal-only domains here.
-              })
-            });
-            if (!emailRes.ok) {
-              const t = await emailRes.text();
-              console.warn("[FollowupForm] email send failed", t.slice(0, 200));
-            }
+      await trackAsync(async () => {
+        try {
+          const res = await fetch(`/api/tickets/${ticket.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+            body: JSON.stringify({
+              resolution,
+              status,
+              target_department: targetDepartment || "",
+              cc_emails: ccEmails
+            })
+          });
+          const data = await res.json();
+          if (!res.ok || !data?.success) {
+            setError(data?.error || "No se pudo guardar el seguimiento.");
+            setSending(false);
+            return;
           }
+          setResolution("");
+          setCcEmails([]);
+          if (typeof onSaved === "function") onSaved();
+        } catch (e) {
+          console.error("[FollowupForm] submit error", e);
+          setError("Error de red al guardar el seguimiento.");
         }
-
-        setResolution("");
-        if (typeof onSaved === "function") onSaved();
-      } catch (e) {
-        console.error("[FollowupForm] submit error", e);
-        setError("Error de red al guardar el seguimiento.");
-      }
-      setSending(false);
+        setSending(false);
+      });
     }
 
     return (
@@ -595,51 +684,13 @@ export default function ParentAttentionSystem() {
           </div>
         </div>
 
-        <div className="mt-2 grid gap-2 rounded border border-blue-200 bg-blue-50 p-3">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={sendEmail}
-              onChange={(e) => setSendEmail(e.target.checked)}
-            />
-            <span className="text-sm font-medium text-blue-900 flex items-center gap-1">
-              <Mail className="w-4 h-4" /> Notificar por correo (solo interno)
-            </span>
-          </label>
-          {sendEmail && (
-            <div className="grid gap-2">
-              <div className="text-xs text-blue-900">
-                Solo se permiten correos institucionales en esta sección.
-              </div>
-              <div className="grid gap-1">
-                <label className="text-sm text-blue-900">Para (separado por coma)</label>
-                <input
-                  type="text"
-                  className="rounded border border-blue-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-1">
-                <label className="text-sm text-blue-900">Asunto</label>
-                <input
-                  type="text"
-                  className="rounded border border-blue-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-1">
-                <label className="text-sm text-blue-900">Contenido</label>
-                <textarea
-                  rows={5}
-                  className="rounded border border-blue-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={emailBody}
-                  onChange={(e) => setEmailBody(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
+        <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+          Un correo será enviado a: <strong>{deptEmail || "—"}</strong>
+          {supEmail ? <> y copia a su supervisor: <strong>{supEmail}</strong></> : <> (sin supervisor configurado)</>}
+          <div className="mt-2">
+            Correos adicionales (internos):
+            <EmailChips value={ccEmails} onChange={setCcEmails} suggestions={internalEmailSuggestions} />
+          </div>
         </div>
 
         {Array.isArray(ticket.followups) && ticket.followups.length > 0 && (
@@ -676,7 +727,7 @@ export default function ParentAttentionSystem() {
             disabled={sending}
             className="inline-flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-white hover:bg-orange-600 disabled:opacity-60"
           >
-            <Check className="w-5 h-5" />
+            {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
             Guardar seguimiento
           </button>
         </div>
@@ -685,6 +736,7 @@ export default function ParentAttentionSystem() {
   };
 
   const TicketCard = ({ ticket }) => {
+    // Visual card with a decorative student silhouette if no photo (no photo in ticket payload by default)
     return (
       <div className="bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow">
         <div className="p-6">
@@ -735,8 +787,8 @@ export default function ParentAttentionSystem() {
             <div className="flex-1">
               <div className="flex items-center gap-6 mb-4">
                 <div className="flex items-center gap-4">
-                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center text-white text-4xl font-bold shadow-lg">
-                    {ticket.created_by?.charAt(0) || "U"}
+                  <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 text-white text-4xl font-bold shadow-lg flex items-center justify-center overflow-hidden">
+                    <span>{ticket.created_by?.charAt(0) || "U"}</span>
                   </div>
                   <ChevronRight className="w-8 h-8 text-purple-600" />
                 </div>
@@ -788,17 +840,19 @@ export default function ParentAttentionSystem() {
                     const ticketCampus = ticket.school_code || ticket.campus || selectedCampus;
                     const depts = await fetchDepartmentsForCampus(ticketCampus);
                     setFollowDepts(depts);
-                    try {
-                      const res = await fetch(`/api/tickets/${ticket.id}`, { cache: "no-store" });
-                      if (res.ok) {
-                        const data = await res.json();
-                        setFollowTicket(data);
-                      } else {
+                    await trackAsync(async () => {
+                      try {
+                        const res = await fetch(`/api/tickets/${ticket.id}`, { cache: "no-store" });
+                        if (res.ok) {
+                          const data = await res.json();
+                          setFollowTicket(data);
+                        } else {
+                          setFollowTicket(ticket);
+                        }
+                      } catch {
                         setFollowTicket(ticket);
                       }
-                    } catch {
-                      setFollowTicket(ticket);
-                    }
+                    });
                     setFollowModalOpen(true);
                   }}
                   className="inline-flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
@@ -827,11 +881,22 @@ export default function ParentAttentionSystem() {
       return fallbackDepartmentOptions;
     }, [departments]);
 
+    // Mandatory recipients preview when canalizing
+    const canalizadoEmail = departments[formData.targetDepartment]?.[0]?.email || "";
+    const canalizadoSup = departments[formData.targetDepartment]?.[0]?.supervisor_email || "";
+
     return (
       <div className="bg-white p-6 rounded-lg shadow-lg">
-        <h2 className="text-2xl font-bold text-orange-500 mb-6">
-          Nueva Ficha - {campuses.find((c) => c.value === selectedCampus)?.label}
-        </h2>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-orange-500">
+            Nueva Ficha - {campuses.find((c) => c.value === selectedCampus)?.label}
+          </h2>
+          {formData.studentPhotoUrl ? (
+            <div className="relative w-16 h-16 rounded-full ring-4 ring-orange-300 overflow-hidden">
+              <img src={formData.studentPhotoUrl} alt="Alumno" loading="lazy" className="w-full h-full object-cover" />
+            </div>
+          ) : null}
+        </div>
 
         <SearchStudent
           students={students}
@@ -846,6 +911,7 @@ export default function ParentAttentionSystem() {
               parentName,
               phoneNumber: student.telefono_padre || student.telefono_madre || "",
               parentEmail: student.email_padre || student.email_madre || "",
+              studentPhotoUrl: student?.matricula?.foto || ""
             }));
 
             const dup = await checkDuplicate(parentName);
@@ -1032,6 +1098,26 @@ export default function ParentAttentionSystem() {
               <option value="1">Cerrado</option>
             </select>
           </div>
+          <div className="grid gap-3 md:col-span-2">
+            <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+              {formData.targetDepartment ? (
+                <>
+                  Un correo será enviado a: <strong>{canalizadoEmail || "—"}</strong>
+                  {canalizadoSup ? <> y copia al supervisor: <strong>{canalizadoSup}</strong></> : <> (sin supervisor configurado)</>}
+                  <div className="mt-2">
+                    Correos adicionales (internos):
+                    <EmailChips
+                      value={formData.ccEmails}
+                      onChange={(next) => setFormData((p) => ({ ...p, ccEmails: next }))}
+                      suggestions={internalEmailSuggestions}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>No hay canalización seleccionada. Si canalizas, se notificará automáticamente al departamento y su supervisor.</>
+              )}
+            </div>
+          </div>
           <div className="grid gap-3">
             <label className="text-sm font-semibold text-gray-700">¿Es queja?</label>
             <div className="flex items-center gap-2">
@@ -1053,21 +1139,18 @@ export default function ParentAttentionSystem() {
 
         <div className="flex items-center gap-3 mt-6">
           <button
-            onClick={() => {
-              setFormData((prev) => ({ ...prev, appendToExisting }));
-              setTimeout(submitTicket, 0);
-            }}
+            onClick={submitTicket}
             className="px-5 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-2"
           >
-            <Save className="w-5 h-5" />
-            {appendToExisting && formData.existingOpenTicketId ? "Agregar Seguimiento" : "Guardar Ficha"}
+            {activeOps > 0 ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+            Guardar Ficha
           </button>
         </div>
       </div>
     );
   };
 
-  // Nursing Report Form (only section allowed to email parents)
+  // Nursing Report Form (only section allowed to email parents; automatic sending)
   const NursingReport = () => {
     const [parentName, setParentName] = useState("");
     const [parentEmail, setParentEmail] = useState("");
@@ -1075,6 +1158,7 @@ export default function ParentAttentionSystem() {
     const [report, setReport] = useState("");
     const [actions, setActions] = useState("");
     const [sending, setSending] = useState(false);
+    const [studentPhoto, setStudentPhoto] = useState("");
 
     async function submitNursingReport() {
       if (!parentName || !parentEmail || !studentName || !report) {
@@ -1082,42 +1166,46 @@ export default function ParentAttentionSystem() {
         return;
       }
       setSending(true);
-      try {
-        // Store in DB as a specialized classification
-        const createRes = await fetch("/api/tickets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
-          body: JSON.stringify({
-            campus: selectedCampus,
-            contact_method: "nursing",
-            is_complaint: 0,
-            parent_name: parentName,
-            student_name: studentName,
-            phone_number: "",
-            parent_email: parentEmail,
-            reason: `Reporte de Enfermería`,
-            resolution: actions || report,
-            appointment_date: null,
-            target_department: "",
-            department_email: "",
-            created_by: "Enfermería",
-            original_department: "Reporte de Enfermería",
-            status: "1"
-          })
-        });
-        const created = await createRes.json();
+      await trackAsync(async () => {
+        try {
+          // Store in DB
+          const createRes = await fetch("/api/tickets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+            body: JSON.stringify({
+              campus: selectedCampus,
+              contact_method: "nursing",
+              is_complaint: 0,
+              parent_name: parentName,
+              student_name: studentName,
+              phone_number: "",
+              parent_email: parentEmail,
+              reason: `Reporte de Enfermería`,
+              resolution: actions || report,
+              appointment_date: null,
+              target_department: "",
+              department_email: "",
+              created_by: "Enfermería",
+              original_department: "Reporte de Enfermería",
+              status: "1"
+            })
+          });
+          const created = await createRes.json();
 
-        if (!createRes.ok || !created?.success) {
-          alert(created?.error || "No se pudo registrar el reporte.");
-          setSending(false);
-          return;
-        }
+          if (!createRes.ok || !created?.success) {
+            alert(created?.error || "No se pudo registrar el reporte.");
+            setSending(false);
+            return;
+          }
 
-        const folio = created.folioNumber || String(created.ticketId).padStart(5, "0");
-        const subject = `Reporte de Enfermería — Folio ${folio}`;
-        const html = `
+          const folio = created.folioNumber || String(created.ticketId).padStart(5, "0");
+          const subject = `Reporte de Enfermería — Folio ${folio}`;
+          const html = `
           <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111827;">
-            <h2 style="color:#065f46;margin-bottom:8px;">Reporte de Enfermería</h2>
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+              ${studentPhoto ? `<img src="${studentPhoto}" alt="${studentName}" style="width:56px;height:56px;border-radius:9999px;object-fit:cover;border:3px solid #10b981;" />` : ""}
+              <h2 style="color:#065f46;margin:0;">Reporte de Enfermería</h2>
+            </div>
             <p style="margin: 0 0 10px 0;">Folio: <strong>${folio}</strong></p>
             <p style="margin: 0 0 10px 0;">Plantel: <strong>${selectedCampus}</strong></p>
             <p style="margin: 0 0 10px 0;">Alumno: <strong>${studentName}</strong></p>
@@ -1133,36 +1221,38 @@ export default function ParentAttentionSystem() {
           </div>
         `;
 
-        const emailRes = await fetch("/api/send-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: [parentEmail],
-            subject,
-            html,
-            scope: "nursing"
-          })
-        });
+          const emailRes = await fetch("/api/send-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: [parentEmail],
+              subject,
+              html,
+              scope: "nursing"
+            })
+          });
 
-        if (!emailRes.ok) {
-          const t = await emailRes.text();
-          console.warn("[Nursing] email send failed", t.slice(0, 200));
-          alert("Reporte registrado, pero ocurrió un problema al enviar el correo.");
-        } else {
-          alert("Reporte de Enfermería enviado a padres.");
+          if (!emailRes.ok) {
+            const t = await emailRes.text();
+            console.warn("[Nursing] email send failed", t.slice(0, 200));
+            alert("Reporte registrado, pero ocurrió un problema al enviar el correo.");
+          } else {
+            alert("Reporte de Enfermería enviado a padres.");
+          }
+
+          // Reset form
+          setParentName("");
+          setParentEmail("");
+          setStudentName("");
+          setReport("");
+          setActions("");
+          setStudentPhoto("");
+        } catch (e) {
+          console.error("[Nursing] submit error", e);
+          alert("Error de red al enviar el reporte.");
         }
-
-        // Reset form
-        setParentName("");
-        setParentEmail("");
-        setStudentName("");
-        setReport("");
-        setActions("");
-      } catch (e) {
-        console.error("[Nursing] submit error", e);
-        alert("Error de red al enviar el reporte.");
-      }
-      setSending(false);
+        setSending(false);
+      });
     }
 
     return (
@@ -1188,6 +1278,7 @@ export default function ParentAttentionSystem() {
             setStudentName(`${student.nombres ?? ""} ${student.apellido_paterno ?? ""} ${student.apellido_materno ?? ""}`.trim());
             setParentName(pName);
             setParentEmail(student.email_padre || student.email_madre || "");
+            setStudentPhoto(student?.matricula?.foto || "");
           }}
           placeholder="Buscar estudiante o padre para llenar datos..."
         />
@@ -1195,12 +1286,22 @@ export default function ParentAttentionSystem() {
         <div className="grid gap-4 md:grid-cols-2">
           <div className="grid gap-1">
             <label className="text-sm font-semibold text-gray-700">Alumno</label>
-            <input
-              type="text"
-              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
-              value={studentName}
-              onChange={(e) => setStudentName(e.target.value)}
-            />
+            <div className="flex items-center gap-3">
+              {studentName ? (
+                <div className="relative w-12 h-12 rounded-full ring-2 ring-emerald-400 overflow-hidden">
+                  {/** Lazy-loaded student photo */}
+                  {students && studentName && (
+                    <img src={studentPhoto || ""} alt={studentName} loading="lazy" className="w-full h-full object-cover" />
+                  )}
+                </div>
+              ) : null}
+              <input
+                type="text"
+                className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
+              />
+            </div>
           </div>
           <div className="grid gap-1">
             <label className="text-sm font-semibold text-gray-700">Padre/Madre/Tutor</label>
@@ -1248,8 +1349,8 @@ export default function ParentAttentionSystem() {
             disabled={sending}
             className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-2 disabled:opacity-60"
           >
-            <Mail className="w-5 h-5" />
-            {sending ? "Enviando..." : "Enviar Reporte a Padres"}
+            {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Stethoscope className="w-5 h-5" />}
+            Enviar Reporte a Padres
           </button>
         </div>
       </div>
@@ -1298,82 +1399,82 @@ export default function ParentAttentionSystem() {
     async function fetchDashboard() {
       setKpiLoading(true);
       setDashLoadError("");
-      try {
-        const url = `/api/dashboard?${buildDashboardQS()}`;
-        console.log("[Dashboard] auto fetch", { url });
-        const res = await fetch(url, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-        if (abort) return;
-        if (res.status === 204) {
-          // throttled; keep previous data
-          setKpiLoading(false);
-          return;
+      await trackAsync(async () => {
+        try {
+          const url = `/api/dashboard?${buildDashboardQS()}`;
+          const res = await fetch(url, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+          if (abort) return;
+          if (res.status === 204) {
+            setKpiLoading(false);
+            return;
+          }
+          if (!res.ok) {
+            const t = await res.text().catch(() => "");
+            console.warn("[Dashboard] not ok", res.status, t.slice(0, 200));
+            setTickets([]);
+            setDashLoadError("No se pudo cargar la información.");
+            setKpiLoading(false);
+            return;
+          }
+          const data = await res.json();
+          setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
+          if (data?.kpi) {
+            const next = {
+              total: Number(data.kpi.total || 0),
+              abiertos: Number(data.kpi.abiertos || 0),
+              cerrados: Number(data.kpi.cerrados || 0),
+              quejas: Number(data.kpi.quejas || 0),
+              avg_resolucion_horas: data.kpi.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
+            };
+            lastGoodKpiRef.current = next;
+            setKpi(next);
+          }
+          setDashLastLoadedAt(new Date());
+        } catch (e) {
+          if (!abort) {
+            console.error("[Dashboard] fetch error", e);
+            setDashLoadError("Error de red.");
+            setTickets([]);
+          }
         }
-        if (!res.ok) {
-          const t = await res.text().catch(() => "");
-          console.warn("[Dashboard] not ok", res.status, t.slice(0, 200));
-          setTickets([]);
-          setDashLoadError("No se pudo cargar la información.");
-          setKpiLoading(false);
-          return;
-        }
-        const data = await res.json();
-        setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
-        if (data?.kpi) {
-          const next = {
-            total: Number(data.kpi.total || 0),
-            abiertos: Number(data.kpi.abiertos || 0),
-            cerrados: Number(data.kpi.cerrados || 0),
-            quejas: Number(data.kpi.quejas || 0),
-            avg_resolucion_horas: data.kpi.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
-          };
-          lastGoodKpiRef.current = next;
-          setKpi(next);
-        }
-        setDashLastLoadedAt(new Date());
-      } catch (e) {
-        if (!abort) {
-          console.error("[Dashboard] fetch error", e);
-          setDashLoadError("Error de red.");
-          setTickets([]);
-        }
-      }
-      if (!abort) setKpiLoading(false);
+        if (!abort) setKpiLoading(false);
+      });
     }
-    // Only auto-fetch on dashboard view
     if (currentView === "dashboard") {
       fetchDashboard();
     }
     return () => { abort = true; };
-  }, [currentView, selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear, buildDashboardQS]);
+  }, [currentView, selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear, buildDashboardQS, trackAsync]);
 
   useEffect(() => {
     let abort = false;
     async function fetchDistribution() {
       setDistLoading(true);
-      try {
-        let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
-        if (!(dashShowAllOpen && dashStatusFilter === "0")) {
-          if (dashSelectedMonth) {
-            distUrl += `&month=${encodeURIComponent(dashSelectedMonth)}`;
-          } else if (dashSchoolYear) {
-            distUrl += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
+      await trackAsync(async () => {
+        try {
+          let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
+          if (!(dashShowAllOpen && dashStatusFilter === "0")) {
+            if (dashSelectedMonth) {
+              distUrl += `&month=${encodeURIComponent(dashSelectedMonth)}`;
+            } else if (dashSchoolYear) {
+              distUrl += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
+            }
           }
+          const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+          if (abort) return;
+          const data = await res.json();
+          setDistStats(Array.isArray(data) ? data : []);
+        } catch (err) {
+          if (!abort) console.error("Error fetching distribution stats:", err);
         }
-        console.log("[Dashboard] auto fetch distribution", { distUrl });
-        const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-        if (abort) return;
-        const data = await res.json();
-        setDistStats(Array.isArray(data) ? data : []);
-      } catch (err) {
-        if (!abort) console.error("Error fetching distribution stats:", err);
-      }
-      if (!abort) setDistLoading(false);
+        if (!abort) setDistLoading(false);
+      });
     }
     if (currentView === "dashboard" && showStats) {
       fetchDistribution();
     }
     return () => { abort = true; };
-  }, [currentView, showStats, selectedCampus, dashShowAllOpen, dashStatusFilter, dashSelectedMonth, dashSchoolYear]);
+  }, [currentView, showStats, selectedCampus, dashShowAllOpen, dashStatusFilter, dashSelectedMonth, dashSchoolYear, trackAsync]);
 
   const Dashboard = () => {
     const filteredTickets = tickets;
@@ -1475,13 +1576,6 @@ export default function ParentAttentionSystem() {
 
             <div className="flex gap-2">
               <button
-                onClick={() => setShowStats((s) => !s)}
-                className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 flex items-center gap-2 shadow transition-all"
-              >
-                <BarChart3 className="w-5 h-5" />
-                {showStats ? "Ocultar Estadísticas" : "Estadísticas"}
-              </button>
-              <button
                 onClick={exportToExcel}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 shadow transition-all"
               >
@@ -1514,7 +1608,7 @@ export default function ParentAttentionSystem() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500">
             <div className="text-sm text-gray-600 flex items-center gap-2">
-              Total {kpiLoading && <span className="inline-block h-2 w-2 rounded-full bg-orange-400 animate-pulse" aria-label="Cargando" />}
+              Total {kpiLoading && <Loader2 className="w-3 h-3 animate-spin text-orange-500" />}
             </div>
             <div className="text-3xl font-bold text-orange-600">{(lastGoodKpiRef.current?.total ?? kpi.total)}</div>
           </div>
@@ -1540,7 +1634,9 @@ export default function ParentAttentionSystem() {
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-lg text-gray-800">Distribución por Departamento</h3>
-              <div className="text-sm text-gray-500">{distLoading ? "Cargando..." : "Actualizado automáticamente"}</div>
+              <div className="text-sm text-gray-500 flex items-center gap-2">
+                {distLoading && <Loader2 className="w-4 h-4 animate-spin text-purple-600" />} Actualizado automáticamente
+              </div>
             </div>
             {distStats.length > 0 ? (
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1648,8 +1744,7 @@ export default function ParentAttentionSystem() {
                             updateDepartment(
                               deptName,
                               editData.email || deptData[0]?.email,
-                              editData.supervisor ||
-                                deptData[0]?.supervisor_email
+                              editData.supervisor || deptData[0]?.supervisor_email
                             )
                           }
                           className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 flex items-center gap-2"
@@ -1696,6 +1791,7 @@ export default function ParentAttentionSystem() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      <TopActivityBar active={activeOps > 0} />
       <nav className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-200">
         <div className="max-w-screen-xl mx-auto px-4">
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:justify-between sm:items-center py-3">
@@ -1794,17 +1890,21 @@ export default function ParentAttentionSystem() {
             ticket={followTicket}
             depts={followDepts}
             onSaved={async () => {
-              try {
-                const res = await fetch(`/api/tickets/${followTicket.id}`, { cache: "no-store" });
-                if (res.ok) {
-                  const data = await res.json();
-                  setFollowTicket(data);
-                }
-              } catch { /* ignore */ }
+              await trackAsync(async () => {
+                try {
+                  const res = await fetch(`/api/tickets/${followTicket.id}`, { cache: "no-store" });
+                  if (res.ok) {
+                    const data = await res.json();
+                    setFollowTicket(data);
+                  }
+                } catch { /* ignore */ }
+              });
             }}
           />
         ) : (
-          <div className="text-gray-600">Cargando ficha…</div>
+          <div className="flex items-center gap-2 text-gray-600">
+            <Loader2 className="w-5 h-5 animate-spin" /> Cargando ficha…
+          </div>
         )}
       </Overlay>
     </div>

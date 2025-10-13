@@ -39,6 +39,16 @@ function isInternalEmail(email, allowedDomains) {
   return allowedDomains.includes(d);
 }
 
+function isPublicConsumerDomain(email) {
+  const d = domainOf(email);
+  if (!d) return false;
+  const publicList = new Set([
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com",
+    "icloud.com", "proton.me", "protonmail.com", "aol.com", "msn.com"
+  ]);
+  return publicList.has(d);
+}
+
 export async function POST(request, context = { params: {} }) {
   const params = await context.params;
   try {
@@ -87,31 +97,31 @@ export async function POST(request, context = { params: {} }) {
 
     const recipients = splitEmails(to);
 
-    // Internal email guard: only allow external recipients for nursing scope.
-    const allowedDomains = (process.env.INTERNAL_EMAIL_DOMAINS || process.env.AUTH_ALLOWED_DOMAINS || "")
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
-
-    // If no allowed domains configured, we default to blocking all external recipients (fail closed),
-    // unless this is explicitly a nursing scope request.
+    // Nursing scope may email parents; other scopes are internal-only.
     const isNursingScope = scope === "nursing";
     if (!isNursingScope) {
-      if (allowedDomains.length === 0) {
-        // Block everything to be safe
-        console.warn("[api/send-email] No INTERNAL_EMAIL_DOMAINS configured; blocking non-nursing outbound email.");
-        return NextResponse.json(
-          { error: "Envío de correos externos deshabilitado. Solo permitido para Reporte de Enfermería." },
-          { status: 403 }
-        );
-      }
-      const invalid = recipients.filter((r) => !isInternalEmail(r, allowedDomains));
-      if (invalid.length > 0) {
-        console.warn("[api/send-email] Blocking external recipients on non-nursing scope:", invalid);
-        return NextResponse.json(
-          { error: "Destinatarios externos no permitidos en esta sección.", invalid },
-          { status: 403 }
-        );
+      const allowedDomains = (process.env.INTERNAL_EMAIL_DOMAINS || process.env.AUTH_ALLOWED_DOMAINS || "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowedDomains.length > 0) {
+        const invalid = recipients.filter((r) => !isInternalEmail(r, allowedDomains));
+        if (invalid.length > 0) {
+          console.warn("[api/send-email] Blocking external recipients on internal scope:", invalid);
+          return NextResponse.json(
+            { error: "Destinatarios externos no permitidos en esta sección.", invalid },
+            { status: 403 }
+          );
+        }
+      } else {
+        const blocked = recipients.filter((r) => isPublicConsumerDomain(r));
+        if (blocked.length > 0) {
+          console.warn("[api/send-email] Blocking public consumer domains on internal scope:", blocked);
+          return NextResponse.json(
+            { error: "Correos públicos no permitidos en esta sección.", invalid: blocked },
+            { status: 403 }
+          );
+        }
       }
     }
 

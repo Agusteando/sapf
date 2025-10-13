@@ -42,6 +42,65 @@ function buildKey({ campus, status, schoolYear, month, showAllOpen }) {
   return `tickets:${campus || "all"}:${status ?? "all"}:${schoolYear || ""}:${month || ""}:${showAllOpen ? "openAll" : "filtered"}`;
 }
 
+function buildTicketEmailHTML({ folio, campus, dept, parentName, studentName, reason, resolution, createdBy, contactMethod, appointmentDate }) {
+  const appt = appointmentDate ? new Date(appointmentDate).toLocaleString("es-MX") : "—";
+  return `
+    <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111827;">
+      <h2 style="color:#1d4ed8;margin-bottom:8px;">Canalización de ficha</h2>
+      <p style="margin: 0 0 10px 0;">Folio: <strong>${folio}</strong></p>
+      <p style="margin: 0 0 10px 0;">Plantel: <strong>${campus}</strong></p>
+      <p style="margin: 0 0 10px 0;">Departamento destino: <strong>${dept || "—"}</strong></p>
+      <hr style="border:0;border-top:1px solid #e5e7eb;margin:12px 0"/>
+      <p style="margin: 0 0 6px 0;"><strong>Padre/Madre/Tutor:</strong> ${parentName || "—"}</p>
+      <p style="margin: 0 0 6px 0;"><strong>Alumno:</strong> ${studentName || "—"}</p>
+      <p style="margin: 0 0 6px 0;"><strong>Medio de contacto:</strong> ${contactMethod || "—"}</p>
+      <p style="margin: 0 0 6px 0;"><strong>Cita:</strong> ${appt}</p>
+      <h3 style="margin:12px 0 6px 0;">Motivo</h3>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">${(reason || "—").replace(/\n/g, "<br/>")}</div>
+      <h3 style="margin:12px 0 6px 0;">Resolución / Acción</h3>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">${(resolution || "—").replace(/\n/g, "<br/>")}</div>
+      <p style="margin-top:12px;color:#6b7280;font-size:12px;">Creado por: ${createdBy || "—"}</p>
+    </div>
+  `;
+}
+
+function uniq(a) {
+  return Array.from(new Set(a.map((s) => String(s || "").trim().toLowerCase()))).filter(Boolean);
+}
+
+async function emailDepartment({ campus, deptName, subject, html, extraCc = [] }, pool) {
+  try {
+    const [rows] = await pool.execute(
+      "SELECT email, supervisor_email FROM deptos_map WHERE campus = ? AND department_name = ? LIMIT 1",
+      [campus, deptName || ""]
+    );
+    const primary = rows?.[0]?.email || "";
+    const sup = rows?.[0]?.supervisor_email || "";
+    const recipients = uniq([primary, sup, ...extraCc]);
+    if (recipients.length === 0) {
+      console.warn("[api/tickets] No recipients found for dept:", deptName, "campus:", campus);
+      return;
+    }
+    const url = (process.env.NEXT_PUBLIC_BASE_URL || "").replace(/\/+$/,"");
+    const endpoint = url ? `${url}/api/send-email` : `${new URL("/api/send-email", "http://localhost").toString()}`;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: recipients, subject, html, scope: "internal" }),
+      cache: "no-store"
+    }).catch(() => null);
+
+    if (!res || !res.ok) {
+      const detail = res ? await res.text().catch(() => "") : "no response";
+      console.warn("[api/tickets] department email failed:", res?.status, detail?.slice(0, 200));
+    } else {
+      console.log("[api/tickets] department email sent to", recipients.length, "recipient(s).");
+    }
+  } catch (e) {
+    console.warn("[api/tickets] emailDepartment error:", e?.message || e);
+  }
+}
+
 export async function GET(request, context = { params: {} }) {
   const params = await context.params;
   try {
@@ -199,6 +258,7 @@ export async function POST(request, context = { params: {} }) {
       created_by,
       original_department,
       status,
+      cc_emails
     } = await request.json();
 
     const pool = await getConnection();
@@ -213,6 +273,7 @@ export async function POST(request, context = { params: {} }) {
       original_department,
       has_appointment: Boolean(appointment_date),
       status,
+      cc_count: Array.isArray(cc_emails) ? cc_emails.length : 0
     });
 
     // Insert ticket, persisting both school_code (preferred) and campus for legacy compatibility
@@ -245,7 +306,7 @@ export async function POST(request, context = { params: {} }) {
         reason,
         resolution,
         resolution,
-        campus, // legacy campus field (may be numeric/text in older rows)
+        campus, // legacy campus field
         contact_method,
         department_email,
         status || "0",
@@ -255,7 +316,7 @@ export async function POST(request, context = { params: {} }) {
         student_name,
         phone_number,
         parent_email,
-        campus, // school_code: use selected campus code (e.g., PT, ST, etc.)
+        campus, // school_code
         created_by || "",
         original_department || "",
       ]
@@ -307,6 +368,25 @@ export async function POST(request, context = { params: {} }) {
         ]
       );
       console.log("[api/tickets][POST] inserted initial seguimiento for folio:", folioNumber);
+    }
+
+    // Mandatory internal notification if canalizado; include supervisor and additional CCs
+    if (target_department) {
+      const subject = `Canalización de ficha ${folioNumber} — ${target_department}`;
+      const html = buildTicketEmailHTML({
+        folio: folioNumber,
+        campus,
+        dept: target_department,
+        parentName: parent_name,
+        studentName: student_name,
+        reason,
+        resolution,
+        createdBy: created_by || "",
+        contactMethod: contact_method || "",
+        appointmentDate: appointment_date || null
+      });
+      const extraCc = Array.isArray(cc_emails) ? cc_emails : [];
+      await emailDepartment({ campus, deptName: target_department, subject, html, extraCc }, pool);
     }
 
     return NextResponse.json({

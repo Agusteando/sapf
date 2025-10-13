@@ -2,6 +2,59 @@
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 
+function followupEmailHTML({ folio, campus, dept, parentName, studentName, resolution, status }) {
+  const statusText = status === "1" ? "Cerrado" : "Abierto";
+  return `
+    <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111827;">
+      <h2 style="color:#1d4ed8;margin-bottom:8px;">Nuevo seguimiento</h2>
+      <p style="margin: 0 0 10px 0;">Folio: <strong>${folio}</strong> — Estatus: <strong>${statusText}</strong></p>
+      <p style="margin: 0 0 10px 0;">Plantel: <strong>${campus}</strong></p>
+      <p style="margin: 0 0 10px 0;">Departamento: <strong>${dept || "—"}</strong></p>
+      <hr style="border:0;border-top:1px solid #e5e7eb;margin:12px 0"/>
+      <p style="margin: 0 0 6px 0;"><strong>Padre/Madre/Tutor:</strong> ${parentName || "—"}</p>
+      <p style="margin: 0 0 6px 0;"><strong>Alumno:</strong> ${studentName || "—"}</p>
+      <h3 style="margin:12px 0 6px 0;">Seguimiento</h3>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">${(resolution || "—").replace(/\n/g, "<br/>")}</div>
+    </div>
+  `;
+}
+
+function uniq(a) {
+  return Array.from(new Set(a.map((s) => String(s || "").trim().toLowerCase()))).filter(Boolean);
+}
+
+async function emailDepartmentInternal(pool, { campus, deptName, subject, html, extraCc = [] }) {
+  try {
+    const [rows] = await pool.execute(
+      "SELECT email, supervisor_email FROM deptos_map WHERE campus = ? AND department_name = ? LIMIT 1",
+      [campus, deptName || ""]
+    );
+    const primary = rows?.[0]?.email || "";
+    const sup = rows?.[0]?.supervisor_email || "";
+    const recipients = uniq([primary, sup, ...extraCc]);
+    if (recipients.length === 0) {
+      console.warn("[api/tickets/:id][PUT] No recipients found for dept:", deptName, "campus:", campus);
+      return;
+    }
+    const url = (process.env.NEXT_PUBLIC_BASE_URL || "").replace(/\/+$/,"");
+    const endpoint = url ? `${url}/api/send-email` : `${new URL("/api/send-email", "http://localhost").toString()}`;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: recipients, subject, html, scope: "internal" }),
+      cache: "no-store"
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      const detail = res ? await res.text().catch(() => "") : "no response";
+      console.warn("[api/tickets/:id][PUT] department email failed:", res?.status, detail?.slice(0, 200));
+    } else {
+      console.log("[api/tickets/:id][PUT] department email sent to", recipients.length, "recipient(s).");
+    }
+  } catch (e) {
+    console.warn("[api/tickets/:id][PUT] emailDepartmentInternal error:", e?.message || e);
+  }
+}
+
 export async function GET(request, context = { params: {} }) {
   const params = await context.params;
   try {
@@ -38,8 +91,8 @@ export async function PUT(request, context = { params: {} }) {
   const params = await context.params;
   try {
     const id = params.id;
-    const { resolution, status, target_department } = await request.json();
-    console.log("[api/tickets/:id][PUT] id:", id, { status, target_department, has_resolution: Boolean(resolution) });
+    const { resolution, status, target_department, cc_emails } = await request.json();
+    console.log("[api/tickets/:id][PUT] id:", id, { status, target_department, has_resolution: Boolean(resolution), cc_count: Array.isArray(cc_emails) ? cc_emails.length : 0 });
 
     const connection = await getConnection();
 
@@ -107,6 +160,26 @@ export async function PUT(request, context = { params: {} }) {
         ]
       );
       console.log("[api/tickets/:id][PUT] appended seguimiento for folio:", folioNumber, "target:", followupTarget);
+
+      // Mandatory internal notification to the department on follow-up
+      const subject = `Seguimiento al folio ${folioNumber} — ${followupTarget || "Departamento"}`;
+      const html = followupEmailHTML({
+        folio: folioNumber,
+        campus: ticket.school_code || ticket.campus || "",
+        dept: followupTarget || "",
+        parentName: ticket.parent_name,
+        studentName: ticket.student_name,
+        resolution: resolution || "",
+        status
+      });
+      const extraCc = Array.isArray(cc_emails) ? cc_emails : [];
+      await emailDepartmentInternal(connection, {
+        campus: ticket.school_code || ticket.campus || "",
+        deptName: followupTarget || "",
+        subject,
+        html,
+        extraCc
+      });
     } else {
       console.log("[api/tickets/:id][PUT] resolution empty => no seguimiento appended");
     }
