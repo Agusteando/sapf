@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   Search,
   Users,
@@ -16,7 +16,11 @@ import {
   Check,
   Download,
   BarChart3,
+  Mail,
+  CornerDownRight,
+  RefreshCw
 } from "lucide-react";
+import Overlay from "@/components/overlay";
 
 export default function ParentAttentionSystem() {
   const [currentView, setCurrentView] = useState("dashboard");
@@ -24,10 +28,18 @@ export default function ParentAttentionSystem() {
   const [tickets, setTickets] = useState([]);
   const [students, setStudents] = useState([]);
   const [departments, setDepartments] = useState({});
-  const [loading, setLoading] = useState(false); // student/dept loading only; UI remains interactive
+  const [loading, setLoading] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
   const [schoolYears, setSchoolYears] = useState([]);
   const [defaultSchoolYear, setDefaultSchoolYear] = useState("");
+
+  const [kpi, setKpi] = useState({ total: 0, abiertos: 0, cerrados: 0, quejas: 0, avg_resolucion_horas: null });
+  const [kpiLoading, setKpiLoading] = useState(false);
+  const lastGoodKpiRef = useRef(null);
+
+  const [followModalOpen, setFollowModalOpen] = useState(false);
+  const [followTicket, setFollowTicket] = useState(null);
+  const [followDepts, setFollowDepts] = useState({});
 
   const [formData, setFormData] = useState({
     contactMethod: "email",
@@ -46,9 +58,26 @@ export default function ParentAttentionSystem() {
     existingOpenTicketId: null,
   });
 
-  // Client-side response cache for dashboard data keyed by filtersKey to minimize server requests
-  const dashboardCacheRef = useRef(new Map()); // key -> { data, etag, expiresAt }
-  const lastFetchAtRef = useRef(new Map()); // key -> timestamp
+  // Dashboard-specific state (manual fetch)
+  const [dashStatusFilter, setDashStatusFilter] = useState("0");
+  const [dashSchoolYear, setDashSchoolYear] = useState("");
+  const [dashSelectedMonth, setDashSelectedMonth] = useState("");
+  const [dashShowAllOpen, setDashShowAllOpen] = useState(true);
+  const [dashLastLoadedAt, setDashLastLoadedAt] = useState(null);
+  const [dashLoadError, setDashLoadError] = useState("");
+
+  // Distribution stats (manual fetch)
+  const [showStats, setShowStats] = useState(false);
+  const [distStats, setDistStats] = useState([]);
+  const [distLoading, setDistLoading] = useState(false);
+
+  // Expose a simple refresh signal for when user adds new tickets/followups
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const refreshTicketsAndKpi = useCallback(() => {
+    // Now only marks intent; fetching still requires user clicking the button
+    console.log("[UI] refresh requested; click 'Cargar/Actualizar' to fetch latest from MySQL.");
+    setRefreshNonce((n) => n + 1);
+  }, []);
 
   const campuses = [
     { value: "PMB", label: "Primaria Baja Metepec" },
@@ -61,7 +90,6 @@ export default function ParentAttentionSystem() {
     { value: "DM", label: "Desarrollo Metepec" },
   ];
 
-  // Fallback department options only if no server mapping exists for campus
   const fallbackDepartmentOptions = [
     "Administración",
     "Dirección",
@@ -73,20 +101,24 @@ export default function ParentAttentionSystem() {
     "Artes y Deportes",
   ];
 
-  // Load dynamic school years from server once
+  // Load school years once (minor DB read; kept to power the month selector)
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         const r = await fetch("/api/stats/school-years", { cache: "no-store" });
+        if (!mounted) return;
         if (!r.ok) {
-          const t = await r.text();
-          console.warn("[app/page] school-years not ok:", r.status, t.slice(0, 200));
           throw new Error("school-years not ok");
         }
         const data = await r.json();
         const items = Array.isArray(data?.items) ? data.items : [];
-        setSchoolYears(items);
-        setDefaultSchoolYear(data?.default || items[0] || "");
+        if (mounted) {
+          setSchoolYears(items);
+          setDefaultSchoolYear(data?.default || items[0] || "");
+          // Initialize dashboard school year
+          setDashSchoolYear((prev) => prev || data?.default || items[0] || "");
+        }
       } catch (e) {
         console.warn("[app/page] failed to fetch school years", e);
         const now = new Date();
@@ -96,24 +128,27 @@ export default function ParentAttentionSystem() {
         for (let i = 0; i < 6; i++) {
           fallback.push(`${base - i}-${base - i + 1}`);
         }
-        setSchoolYears(fallback);
-        setDefaultSchoolYear(fallback[0]);
+        if (mounted) {
+          setSchoolYears(fallback);
+          setDefaultSchoolYear(fallback[0]);
+          setDashSchoolYear((prev) => prev || fallback[0]);
+        }
       }
     })();
+    return () => { mounted = false; };
   }, []);
 
-  const fetchStudentData = async (campus) => {
+  // Fetch helpers gated by current view to avoid hitting DB when not needed
+  const fetchStudentData = useCallback(async (campus) => {
+    console.log("[students] fetching for campus:", campus);
     setLoading(true);
     try {
       const response = await fetch(`/api/students/${campus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
       if (!response.ok) {
-        const txt = await response.text();
-        console.warn("[app/page] students fetch not ok:", response.status, txt.slice(0, 200));
         setStudents([]);
       } else {
         const data = await response.json();
         const arr = Array.isArray(data?.students) ? data.students : [];
-        console.log("[app/page] fetchStudentData length:", arr.length);
         setStudents(arr);
       }
     } catch (error) {
@@ -121,7 +156,7 @@ export default function ParentAttentionSystem() {
       setStudents([]);
     }
     setLoading(false);
-  };
+  }, []);
 
   function chooseDefaultOriginDepartment(grouped) {
     const names = Object.keys(grouped);
@@ -137,17 +172,15 @@ export default function ParentAttentionSystem() {
     for (const p of priority) {
       if (names.includes(p)) return p;
     }
-    // fallback to first alpha
     return names.sort((a, b) => a.localeCompare(b, "es"))[0];
   }
 
-  const fetchDepartments = async () => {
+  const fetchDepartments = useCallback(async () => {
+    console.log("[departments] fetching for campus:", selectedCampus);
     try {
       const response = await fetch(`/api/departments/${selectedCampus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
       if (!response.ok) {
-        console.warn("[app/page] departments not ok:", response.status);
         setDepartments({});
-        // When no server mapping, ensure selectedDepartment falls back to first fallback option
         setFormData((prev) => ({
           ...prev,
           selectedDepartment: prev.selectedDepartment || fallbackDepartmentOptions[0],
@@ -162,7 +195,6 @@ export default function ParentAttentionSystem() {
       }, {});
       setDepartments(grouped);
 
-      // Auto-select origin department based on deptos map if not set or outdated
       setFormData((prev) => {
         const current = prev.selectedDepartment;
         const available = Object.keys(grouped);
@@ -176,13 +208,34 @@ export default function ParentAttentionSystem() {
       console.error("Error fetching departments:", error);
       setDepartments({});
     }
-  };
-
-  useEffect(() => {
-    fetchStudentData(selectedCampus);
-    fetchDepartments();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampus]);
+
+  const fetchDepartmentsForCampus = useCallback(async (campusCode) => {
+    try {
+      const response = await fetch(`/api/departments/${encodeURIComponent(campusCode)}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+      if (!response.ok) return {};
+      const data = await response.json();
+      const grouped = (Array.isArray(data) ? data : []).reduce((acc, dept) => {
+        if (!acc[dept.department_name]) acc[dept.department_name] = [];
+        acc[dept.department_name].push(dept);
+        return acc;
+      }, {});
+      return grouped;
+    } catch (e) {
+      console.warn("[app/page] fetchDepartmentsForCampus error", e);
+      return {};
+    }
+  }, []);
+
+  // Only load students/departments when on relevant views
+  useEffect(() => {
+    if (currentView === "form") {
+      fetchStudentData(selectedCampus);
+      fetchDepartments();
+    } else if (currentView === "departments") {
+      fetchDepartments();
+    }
+  }, [currentView, selectedCampus, fetchStudentData, fetchDepartments]);
 
   const checkDuplicate = async (parentName) => {
     if (!parentName || parentName.length < 3) return null;
@@ -210,7 +263,6 @@ export default function ParentAttentionSystem() {
       const departmentEmail =
         departments[formData.selectedDepartment]?.[0]?.email || "";
 
-      // If an existing open ticket was detected and user opted to append, use PUT to add seguimiento
       if (formData.existingOpenTicketId && formData.appendToExisting) {
         const response = await fetch(`/api/tickets/${formData.existingOpenTicketId}`, {
           method: "PUT",
@@ -234,6 +286,8 @@ export default function ParentAttentionSystem() {
           appendToExisting: false,
           existingOpenTicketId: null,
         }));
+        // Inform user to manually refresh the dashboard
+        console.log("[UI] Seguimiento guardado. Use el botón 'Cargar/Actualizar' para ver datos actualizados.");
         return;
       }
 
@@ -279,6 +333,7 @@ export default function ParentAttentionSystem() {
           existingOpenTicketId: null,
           appendToExisting: false,
         });
+        console.log("[UI] Ficha creada. Use 'Cargar/Actualizar' para actualizar el tablero.");
       } else {
         alert(result?.error || "No se pudo generar la ficha");
       }
@@ -312,7 +367,6 @@ export default function ParentAttentionSystem() {
     window.open(`/api/export-excel?campus=${selectedCampus}&status=`, "_blank");
   };
 
-  // Label showing who is in charge for "canalizar"
   function holderDisplayFor(deptName) {
     const entry = departments?.[deptName]?.[0] || {};
     const cand =
@@ -369,7 +423,6 @@ export default function ParentAttentionSystem() {
 
       const dup = await checkDuplicate(parentName);
       setDuplicate(dup);
-      // Propagate duplicate to parent form state for submit logic
       setFormData((prev) => ({
         ...prev,
         existingOpenTicketId: dup?.dup === 1 ? dup?.id : null,
@@ -435,6 +488,249 @@ export default function ParentAttentionSystem() {
             </span>
           </div>
         )}
+      </div>
+    );
+  };
+
+  const FollowupForm = ({ ticket, depts, onSaved }) => {
+    const [resolution, setResolution] = useState("");
+    const [status, setStatus] = useState(ticket.status || "0");
+    const [targetDepartment, setTargetDepartment] = useState(ticket.target_department || "");
+    const [sending, setSending] = useState(false);
+    const [sendEmail, setSendEmail] = useState(false);
+    const [emailTo, setEmailTo] = useState(() => {
+      const list = [];
+      if (ticket.parent_email) list.push(ticket.parent_email);
+      if (ticket.department_email) list.push(ticket.department_email);
+      return list.join(", ");
+    });
+    const [emailSubject, setEmailSubject] = useState(`Seguimiento al folio ${String(ticket.id).padStart(5, "0")}`);
+    const [emailBody, setEmailBody] = useState(
+      `<p>Se ha registrado un nuevo seguimiento para el folio <strong>${String(ticket.id).padStart(5, "0")}</strong>.</p>
+<p><strong>Plantel:</strong> ${ticket.school_code || ticket.campus || ""}</p>
+<p><strong>Padre/Madre:</strong> ${ticket.parent_name}</p>
+<p><strong>Alumno:</strong> ${ticket.student_name}</p>
+<p><strong>Departamento:</strong> ${targetDepartment || ticket.target_department || ticket.original_department || ""}</p>
+<p><strong>Seguimiento:</strong></p>
+<p>${(resolution || "").replace(/\n/g, "<br/>")}</p>`
+    );
+    const [error, setError] = useState("");
+
+    const deptOptions = useMemo(() => Object.keys(depts || {}), [depts]);
+
+    async function submitFollowup() {
+      setError("");
+      if (!resolution || resolution.trim().length === 0) {
+        setError("Escribe el texto del seguimiento.");
+        return;
+      }
+      setSending(true);
+      try {
+        const res = await fetch(`/api/tickets/${ticket.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({
+            resolution,
+            status,
+            target_department: targetDepartment || ""
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          setError(data?.error || "No se pudo guardar el seguimiento.");
+          setSending(false);
+          return;
+        }
+
+        if (sendEmail) {
+          const recipients = emailTo
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+          if (recipients.length > 0) {
+            const html = emailBody || `<p>${resolution.replace(/\n/g, "<br/>")}</p>`;
+            const emailRes = await fetch("/api/send-email", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: recipients,
+                subject: emailSubject || `Seguimiento al folio ${String(ticket.id).padStart(5, "0")}`,
+                html
+              })
+            });
+            if (!emailRes.ok) {
+              const t = await emailRes.text();
+              console.warn("[FollowupForm] email send failed", t.slice(0, 200));
+            }
+          }
+        }
+
+        setResolution("");
+        if (typeof onSaved === "function") onSaved();
+      } catch (e) {
+        console.error("[FollowupForm] submit error", e);
+        setError("Error de red al guardar el seguimiento.");
+      }
+      setSending(false);
+    }
+
+    return (
+      <div className="grid gap-4">
+        <div className="grid gap-1">
+          <div className="text-sm text-gray-500">
+            Fecha: {new Date(ticket.fecha).toLocaleString("es-MX")}
+          </div>
+          <div className="text-lg font-semibold text-gray-800">
+            Folio {ticket.folio_number || String(ticket.id).padStart(5, "0")}
+          </div>
+          <div className="flex items-center gap-3">
+            {ticket.status === "1" ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1 text-green-700 text-sm">
+                <Lock className="w-4 h-4" /> Cerrado
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2 rounded-full bg-red-50 px-3 py-1 text-red-700 text-sm">
+                <Pin className="w-4 h-4" /> Abierto
+              </span>
+            )}
+            <span className="text-sm text-gray-600">
+              Plantel: {ticket.school_code || ticket.campus}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <div className="font-semibold text-gray-700">Motivo</div>
+          <div className="rounded bg-gray-50 p-3 text-sm text-gray-700">{ticket.reason}</div>
+        </div>
+
+        <div className="grid gap-2">
+          <div className="font-semibold text-gray-700">Resolución inicial</div>
+          <div className="rounded bg-gray-50 p-3 text-sm text-gray-700">{ticket.resolution || "—"}</div>
+        </div>
+
+        <div className="grid gap-1">
+          <div className="font-semibold text-gray-800">Agregar seguimiento</div>
+          <textarea
+            rows={6}
+            className="w-full rounded border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Describe el seguimiento..."
+            value={resolution}
+            onChange={(e) => setResolution(e.target.value)}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-1">
+            <label className="text-sm font-medium text-gray-700">Estatus</label>
+            <select
+              className="rounded border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              <option value="0">Abierto</option>
+              <option value="1">Cerrado</option>
+            </select>
+          </div>
+          <div className="grid gap-1 sm:col-span-2">
+            <label className="text-sm font-medium text-gray-700">Canalizar a</label>
+            <select
+              className="rounded border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={targetDepartment}
+              onChange={(e) => setTargetDepartment(e.target.value)}
+            >
+              <option value="">(Sin cambio)</option>
+              {deptOptions.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-2 grid gap-2 rounded border border-blue-200 bg-blue-50 p-3">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={sendEmail}
+              onChange={(e) => setSendEmail(e.target.checked)}
+            />
+            <span className="text-sm font-medium text-blue-900 flex items-center gap-1">
+              <Mail className="w-4 h-4" /> Enviar notificación por correo
+            </span>
+          </label>
+          {sendEmail && (
+            <div className="grid gap-2">
+              <div className="grid gap-1">
+                <label className="text-sm text-blue-900">Para (separado por coma)</label>
+                <input
+                  type="text"
+                  className="rounded border border-blue-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1">
+                <label className="text-sm text-blue-900">Asunto</label>
+                <input
+                  type="text"
+                  className="rounded border border-blue-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1">
+                <label className="text-sm text-blue-900">Contenido</label>
+                <textarea
+                  rows={5}
+                  className="rounded border border-blue-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={emailBody}
+                  onChange={(e) => setEmailBody(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {Array.isArray(ticket.followups) && ticket.followups.length > 0 && (
+          <div className="grid gap-2">
+            <div className="font-semibold text-gray-800">Seguimientos ({ticket.followups.length})</div>
+            <div className="grid gap-2">
+              {ticket.followups.map((f, idx) => (
+                <div key={`${f.id || idx}-${idx}`} className="rounded border border-gray-200 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="inline-flex items-center gap-2 text-sm text-gray-600">
+                      <CornerDownRight className="w-4 h-4" />
+                      <span>{new Date(f.fecha).toLocaleString("es-MX")}</span>
+                    </div>
+                    <div className="text-xs rounded-full px-2 py-0.5 border border-gray-300 text-gray-700">
+                      {f.target_department || "—"}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-sm text-gray-800 whitespace-pre-wrap">{f.resolution}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-2">
+          <button
+            onClick={submitFollowup}
+            disabled={sending}
+            className="inline-flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-white hover:bg-orange-600 disabled:opacity-60"
+          >
+            <Check className="w-5 h-5" />
+            Guardar seguimiento
+          </button>
+        </div>
       </div>
     );
   };
@@ -536,6 +832,31 @@ export default function ParentAttentionSystem() {
                   </div>
                 </div>
               )}
+
+              <div className="mt-4">
+                <button
+                  onClick={async () => {
+                    const ticketCampus = ticket.school_code || ticket.campus || selectedCampus;
+                    const depts = await fetchDepartmentsForCampus(ticketCampus);
+                    setFollowDepts(depts);
+                    try {
+                      const res = await fetch(`/api/tickets/${ticket.id}`, { cache: "no-store" });
+                      if (res.ok) {
+                        const data = await res.json();
+                        setFollowTicket(data);
+                      } else {
+                        setFollowTicket(ticket);
+                      }
+                    } catch {
+                      setFollowTicket(ticket);
+                    }
+                    setFollowModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+                >
+                  Ver/Agregar seguimiento
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -546,12 +867,10 @@ export default function ParentAttentionSystem() {
   const TicketForm = () => {
     const [appendToExisting, setAppendToExisting] = useState(false);
 
-    // Sync appendToExisting with duplicate detection on formData
     useEffect(() => {
       setAppendToExisting(Boolean(formData.existingOpenTicketId));
     }, [formData.existingOpenTicketId]);
 
-    // Derive available origin departments: prefer server mapping for campus
     const originDepartments = useMemo(() => {
       const mapped = Object.keys(departments || {});
       if (mapped.length > 0) return mapped;
@@ -773,9 +1092,7 @@ export default function ParentAttentionSystem() {
         <div className="flex items-center gap-3 mt-6">
           <button
             onClick={() => {
-              // persist appendToExisting toggle in formData before submit
               setFormData((prev) => ({ ...prev, appendToExisting }));
-              // defer submit on next tick to ensure state sync
               setTimeout(submitTicket, 0);
             }}
             className="px-5 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-2"
@@ -788,27 +1105,13 @@ export default function ParentAttentionSystem() {
     );
   };
 
+  // Manual dashboard fetch: requires user action
   const Dashboard = () => {
-    const [statusFilter, setStatusFilter] = useState("0");
-    const [showStats, setShowStats] = useState(false);
-    const [schoolYear, setSchoolYear] = useState("");
-    const [selectedMonth, setSelectedMonth] = useState("");
-    const [showAllOpen, setShowAllOpen] = useState(true);
-    const [distStats, setDistStats] = useState([]);
-    const [kpi, setKpi] = useState({ total: 0, abiertos: 0, cerrados: 0, quejas: 0, avg_resolucion_horas: null });
-    const [loadError, setLoadError] = useState("");
+    const [inflight, setInflight] = useState(false);
 
-    // Initialize school year once default is available
-    useEffect(() => {
-      if (!schoolYear && defaultSchoolYear) {
-        setSchoolYear(defaultSchoolYear);
-      }
-    }, [defaultSchoolYear, schoolYear]);
-
-    // Months for current school year
     const months = useMemo(() => {
-      if (!schoolYear) return [];
-      const [startYear, endYear] = schoolYear.split("-").map(Number);
+      if (!dashSchoolYear) return [];
+      const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
       const arr = [];
       for (let m = 7; m < 12; m++) {
         const date = new Date(startYear, m, 1);
@@ -825,248 +1128,94 @@ export default function ParentAttentionSystem() {
         });
       }
       return arr;
-    }, [schoolYear]);
+    }, [dashSchoolYear]);
 
-    // Build query string for unified endpoint
-    const buildQS = () => {
+    const buildQS = useCallback(() => {
       let qs = `campus=${encodeURIComponent(selectedCampus)}`;
-      if (statusFilter !== undefined && statusFilter !== null) {
-        qs += `&status=${encodeURIComponent(statusFilter)}`;
+      if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
+        qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
       }
-      if (showAllOpen && statusFilter === "0") {
+      if (dashShowAllOpen && dashStatusFilter === "0") {
         qs += `&showAllOpen=true`;
-      } else if (selectedMonth) {
-        qs += `&month=${encodeURIComponent(selectedMonth)}`;
-      } else if (schoolYear) {
-        qs += `&schoolYear=${encodeURIComponent(schoolYear)}`;
+      } else if (dashSelectedMonth) {
+        qs += `&month=${encodeURIComponent(dashSelectedMonth)}`;
+      } else if (dashSchoolYear) {
+        qs += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
       }
       return qs;
-    };
+    }, [selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear]);
 
-    // Build stable filter key
-    const filtersKey = useMemo(() => {
-      return JSON.stringify({
-        campus: selectedCampus,
-        status: statusFilter,
-        showAllOpen: showAllOpen && statusFilter === "0",
-        month: selectedMonth || "",
-        schoolYear: selectedMonth ? "" : schoolYear || "",
-      });
-    }, [selectedCampus, statusFilter, showAllOpen, selectedMonth, schoolYear]);
-
-    const abortRef = useRef(null);
-    const debounceRef = useRef(null);
-
-    // Client-side dedupe and TTL microcache to avoid repeated requests
-    useEffect(() => {
-      const now = Date.now();
-      const isOpenAll = showAllOpen && statusFilter === "0";
-      const TTL_MS = isOpenAll ? 30000 : 8000;
-
-      // If we have fresh cached data for this key, use it and skip network
-      const cached = dashboardCacheRef.current.get(filtersKey);
-      if (cached && cached.expiresAt > now) {
-        setLoadError((prev) => (prev ? "" : prev));
-        const data = cached.data;
-        const arr = Array.isArray(data?.tickets) ? data.tickets : [];
-        setTickets(arr);
-        setKpi({
-          total: Number(data?.kpi?.total || 0),
-          abiertos: Number(data?.kpi?.abiertos || 0),
-          cerrados: Number(data?.kpi?.cerrados || 0),
-          quejas: Number(data?.kpi?.quejas || 0),
-          avg_resolucion_horas: data?.kpi?.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
-        });
-        return;
-      }
-
-      // Hard cooldown: if lastFetch within TTL, skip entirely
-      const lastAt = lastFetchAtRef.current.get(filtersKey) || 0;
-      if (now - lastAt < TTL_MS) {
-        return;
-      }
-
-      if (abortRef.current) {
-        abortRef.current.abort();
-      }
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      // Stale ETag (even if expired) enables server 304 short-circuit
-      const staleEtag = cached?.etag || "";
-
-      debounceRef.current = setTimeout(async () => {
-        try {
-          setLoadError((prev) => (prev ? "" : prev));
-          const url = `/api/dashboard?${buildQS()}`;
-          const res = await fetch(url, {
-            cache: "no-store",
-            headers: {
-              "x-client": "sapf-app",
-              ...(staleEtag ? { "If-None-Match": staleEtag } : {}),
-            },
-            signal: controller.signal,
-          });
-
-          // 204 => server throttle; keep existing UI and extend cache window slightly
-          if (res.status === 204) {
-            const e = dashboardCacheRef.current.get(filtersKey);
-            if (e) {
-              e.expiresAt = Date.now() + Math.min(3000, TTL_MS);
-              dashboardCacheRef.current.set(filtersKey, e);
-            }
-            return;
-          }
-
-          if (res.status === 304) {
-            // Data unchanged; refresh client cache TTL
-            if (cached) {
-              cached.expiresAt = Date.now() + TTL_MS;
-              dashboardCacheRef.current.set(filtersKey, cached);
-            }
-            return;
-          }
-
-          if (!res.ok) {
-            const txt = await res.text();
-            console.warn("[Dashboard] dashboard not ok:", res.status, txt.slice(0, 200));
-            setTickets([]);
-            setKpi({ total: 0, abiertos: 0, cerrados: 0, quejas: 0, avg_resolucion_horas: null });
-            setLoadError("No se pudo cargar la información.");
-            return;
-          }
-
-          const data = await res.json();
-          const arr = Array.isArray(data?.tickets) ? data.tickets : [];
-          console.log("[Dashboard] fetched tickets:", arr.length, "followupsCount:", data?._debug?.followupsCount ?? "n/a");
-          setTickets(arr);
-          setKpi({
-            total: Number(data?.kpi?.total || 0),
-            abiertos: Number(data?.kpi?.abiertos || 0),
-            cerrados: Number(data?.kpi?.cerrados || 0),
-            quejas: Number(data?.kpi?.quejas || 0),
-            avg_resolucion_horas: data?.kpi?.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
-          });
-
-          const etag = res.headers.get("etag") || "";
-          dashboardCacheRef.current.set(filtersKey, {
-            data,
-            etag,
-            expiresAt: Date.now() + TTL_MS,
-          });
-          lastFetchAtRef.current.set(filtersKey, Date.now());
-        } catch (e) {
-          if (controller.signal.aborted) {
-            return;
-          }
-          console.error("[Dashboard] error", e);
-          setLoadError("Error de red.");
+    async function fetchDashboard() {
+      if (inflight) return;
+      setInflight(true);
+      setKpiLoading(true);
+      setDashLoadError("");
+      try {
+        const url = `/api/dashboard?${buildQS()}`;
+        console.log("[Dashboard] manual fetch", { url });
+        const res = await fetch(url, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          console.warn("[Dashboard] not ok", res.status, t.slice(0, 200));
           setTickets([]);
+          setDashLoadError("No se pudo cargar la información.");
+          setKpiLoading(false);
+          setInflight(false);
+          return;
         }
-      }, 300);
-
-      return () => {
-        controller.abort();
-        clearTimeout(debounceRef.current);
-      };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filtersKey, selectedCampus, statusFilter, showAllOpen, selectedMonth, schoolYear]);
-
-    // Distribution stats (optional) with debounce and client-side dedupe to avoid bursts
-    const distAbortRef = useRef(null);
-    const distDebounceRef = useRef(null);
-    const lastDistKeyRef = useRef("");
-    const lastDistAtRef = useRef(0);
-
-    useEffect(() => {
-      if (!showStats) return;
-
-      const distKey = JSON.stringify({
-        campus: selectedCampus,
-        month: selectedMonth || "",
-        schoolYear: selectedMonth ? "" : schoolYear || "",
-        openAll: showAllOpen && statusFilter === "0",
-      });
-
-      const now = Date.now();
-      if (lastDistKeyRef.current === distKey && (now - lastDistAtRef.current) < 3000) {
-        return;
+        const data = await res.json();
+        setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
+        if (data?.kpi) {
+          const next = {
+            total: Number(data.kpi.total || 0),
+            abiertos: Number(data.kpi.abiertos || 0),
+            cerrados: Number(data.kpi.cerrados || 0),
+            quejas: Number(data.kpi.quejas || 0),
+            avg_resolucion_horas: data.kpi.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
+          };
+          lastGoodKpiRef.current = next;
+          setKpi(next);
+        }
+        setDashLastLoadedAt(new Date());
+      } catch (e) {
+        console.error("[Dashboard] fetch error", e);
+        setDashLoadError("Error de red.");
+        setTickets([]);
       }
-      lastDistKeyRef.current = distKey;
-      lastDistAtRef.current = now;
+      setKpiLoading(false);
+      setInflight(false);
+    }
 
-      if (distAbortRef.current) distAbortRef.current.abort();
-      if (distDebounceRef.current) clearTimeout(distDebounceRef.current);
-
-      const controller = new AbortController();
-      distAbortRef.current = controller;
-
-      distDebounceRef.current = setTimeout(async () => {
-        try {
-          let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
-          if (!(showAllOpen && statusFilter === "0")) {
-            if (selectedMonth) {
-              distUrl += `&month=${encodeURIComponent(selectedMonth)}`;
-            } else if (schoolYear) {
-              distUrl += `&schoolYear=${encodeURIComponent(schoolYear)}`;
-            }
+    async function fetchDistribution() {
+      setDistLoading(true);
+      try {
+        let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
+        if (!(dashShowAllOpen && dashStatusFilter === "0")) {
+          if (dashSelectedMonth) {
+            distUrl += `&month=${encodeURIComponent(dashSelectedMonth)}`;
+          } else if (dashSchoolYear) {
+            distUrl += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
           }
-          const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" }, signal: controller.signal });
-          const data = await res.json();
-          setDistStats(Array.isArray(data) ? data : []);
-        } catch (err) {
-          if (controller.signal.aborted) return;
-          console.error("Error fetching distribution stats:", err);
         }
-      }, 400);
-
-      return () => {
-        controller.abort();
-        clearTimeout(distDebounceRef.current);
-      };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showStats, selectedCampus, statusFilter, schoolYear, selectedMonth, showAllOpen]);
+        console.log("[Dashboard] manual fetch distribution", { distUrl });
+        const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+        const data = await res.json();
+        setDistStats(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Error fetching distribution stats:", err);
+      }
+      setDistLoading(false);
+    }
 
     const filteredTickets = tickets;
 
     return (
       <div className="p-6">
-        {/* Non-blocking loading indicator */}
-        {loading && (
-          <div className="mb-3 text-sm text-gray-600">Cargando datos del plantel…</div>
-        )}
-
         <h1 className="text-4xl font-bold text-center text-orange-500 mb-8">
           Mapa de Seguimiento de Fichas
         </h1>
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500">
-            <div className="text-sm text-gray-600">Total</div>
-            <div className="text-3xl font-bold text-orange-600">{kpi.total}</div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-red-500">
-            <div className="text-sm text-gray-600">Abiertos</div>
-            <div className="text-3xl font-bold text-red-600">{kpi.abiertos}</div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
-            <div className="text-sm text-gray-600">Cerrados</div>
-            <div className="text-3xl font-bold text-green-600">{kpi.cerrados}</div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-purple-500">
-            <div className="text-sm text-gray-600">Tiempo prom. cierre</div>
-            <div className="text-2xl font-bold text-purple-600">
-              {kpi.avg_resolucion_horas !== null ? `${kpi.avg_resolucion_horas.toFixed(1)} h` : "—"}
-            </div>
-          </div>
-        </div>
-
         <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
-          {/* Campus and Period Selection */}
           <div className="flex flex-col lg:flex-row lg:flex-wrap gap-4 mb-6">
             <div className="flex items-center gap-3">
               <label className="font-semibold text-gray-700">Plantel:</label>
@@ -1083,15 +1232,14 @@ export default function ParentAttentionSystem() {
               </select>
             </div>
 
-            {/* School Year Selection - always enabled */}
             <div className="flex items-center gap-3">
               <label className="font-semibold text-gray-700">Ciclo Escolar:</label>
               <select
                 className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                value={schoolYear}
+                value={dashSchoolYear}
                 onChange={(e) => {
-                  setSchoolYear(e.target.value);
-                  setSelectedMonth("");
+                  setDashSchoolYear(e.target.value);
+                  setDashSelectedMonth("");
                 }}
               >
                 {schoolYears.map((year) => (
@@ -1102,13 +1250,12 @@ export default function ParentAttentionSystem() {
               </select>
             </div>
 
-            {/* Month Selection - always enabled */}
             <div className="flex items-center gap-3">
               <label className="font-semibold text-gray-700">Mes:</label>
               <select
                 className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
+                value={dashSelectedMonth}
+                onChange={(e) => setDashSelectedMonth(e.target.value)}
               >
                 <option value="">Todos</option>
                 {months.map((month) => (
@@ -1120,20 +1267,19 @@ export default function ParentAttentionSystem() {
             </div>
           </div>
 
-          {/* Status Filter */}
           <div className="flex flex-col lg:flex-row lg:justify-between items-stretch gap-4">
             <div className="flex gap-4">
               <label
                 className={`flex items-center gap-2 cursor-pointer px-4 py-2 border-2 rounded-lg transition-colors ${
-                  statusFilter === "0"
+                  dashStatusFilter === "0"
                     ? "border-red-500 bg-red-50"
                     : "border-gray-300 hover:bg-gray-50"
                 }`}
               >
                 <input
                   type="radio"
-                  checked={statusFilter === "0"}
-                  onChange={() => setStatusFilter("0")}
+                  checked={dashStatusFilter === "0"}
+                  onChange={() => setDashStatusFilter("0")}
                   className="text-red-600"
                 />
                 <Pin className="w-5 h-5 text-red-500" />
@@ -1143,15 +1289,15 @@ export default function ParentAttentionSystem() {
               </label>
               <label
                 className={`flex items-center gap-2 cursor-pointer px-4 py-2 border-2 rounded-lg transition-colors ${
-                  statusFilter === "1"
+                  dashStatusFilter === "1"
                     ? "border-green-500 bg-green-50"
                     : "border-gray-300 hover:bg-gray-50"
                 }`}
               >
                 <input
                   type="radio"
-                  checked={statusFilter === "1"}
-                  onChange={() => setStatusFilter("1")}
+                  checked={dashStatusFilter === "1"}
+                  onChange={() => setDashStatusFilter("1")}
                   className="text-green-600"
                 />
                 <Lock className="w-5 h-5 text-green-500" />
@@ -1159,13 +1305,12 @@ export default function ParentAttentionSystem() {
               </label>
             </div>
 
-            {/* Show All Open Tickets Toggle */}
-            {statusFilter === "0" && (
+            {dashStatusFilter === "0" && (
               <label className="flex items-center gap-2 cursor-pointer px-4 py-2 border-2 border-blue-500 bg-blue-50 rounded-lg">
                 <input
                   type="checkbox"
-                  checked={showAllOpen}
-                  onChange={(e) => setShowAllOpen(e.target.checked)}
+                  checked={dashShowAllOpen}
+                  onChange={(e) => setDashShowAllOpen(e.target.checked)}
                   className="text-blue-600"
                 />
                 <span className="font-medium text-blue-700">
@@ -1174,14 +1319,22 @@ export default function ParentAttentionSystem() {
               </label>
             )}
 
-            {/* Action Buttons */}
             <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  await fetchDashboard();
+                }}
+                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 flex items-center gap-2 shadow transition-all"
+              >
+                <RefreshCw className={`w-5 h-5 ${inflight ? "animate-spin" : ""}`} />
+                Cargar/Actualizar
+              </button>
               <button
                 onClick={() => setShowStats((s) => !s)}
                 className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 flex items-center gap-2 shadow transition-all"
               >
                 <BarChart3 className="w-5 h-5" />
-                Estadísticas
+                {showStats ? "Ocultar Estadísticas" : "Estadísticas"}
               </button>
               <button
                 onClick={exportToExcel}
@@ -1200,48 +1353,88 @@ export default function ParentAttentionSystem() {
             </div>
           </div>
 
-          {/* Active Filters Info */}
           <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
             <span className="font-semibold">Filtros:</span>
-            {selectedMonth
-              ? ` Mes: ${months.find((m) => m.value === selectedMonth)?.label}`
-              : ` Ciclo: ${schoolYear}`}
+            {dashSelectedMonth
+              ? ` Mes: ${months.find((m) => m.value === dashSelectedMonth)?.label}`
+              : ` Ciclo: ${dashSchoolYear}`}
+            {dashLastLoadedAt && (
+              <span className="ml-3 text-blue-700">
+                Última carga: {dashLastLoadedAt.toLocaleString("es-MX")}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Statistics */}
-        {showStats && distStats.length > 0 && (
-          <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-            <h3 className="font-bold text-lg mb-4 text-gray-800">
-              Distribución por Departamento
-            </h3>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {distStats.map((item, idx) => (
-                <div
-                  key={`${item.depto}-${idx}`}
-                  className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500"
-                >
-                  <div className="text-sm text-gray-600">{item.depto}</div>
-                  <div className="text-2xl font-bold text-orange-600">
-                    {Number(item.porc).toFixed(1)}%
-                  </div>
-                </div>
-              ))}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500">
+            <div className="text-sm text-gray-600 flex items-center gap-2">
+              Total {kpiLoading && <span className="inline-block h-2 w-2 rounded-full bg-orange-400 animate-pulse" aria-label="Cargando" />}
             </div>
+            <div className="text-3xl font-bold text-orange-600">{(lastGoodKpiRef.current?.total ?? kpi.total)}</div>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-red-500">
+            <div className="text-sm text-gray-600">Abiertos</div>
+            <div className="text-3xl font-bold text-red-600">{(lastGoodKpiRef.current?.abiertos ?? kpi.abiertos)}</div>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
+            <div className="text-sm text-gray-600">Cerrados</div>
+            <div className="text-3xl font-bold text-green-600">{(lastGoodKpiRef.current?.cerrados ?? kpi.cerrados)}</div>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow border-l-4 border-purple-500">
+            <div className="text-sm text-gray-600">Tiempo prom. cierre</div>
+            <div className="text-2xl font-bold text-purple-600">
+              {((lastGoodKpiRef.current?.avg_resolucion_horas ?? kpi.avg_resolucion_horas) !== null)
+                ? `${(lastGoodKpiRef.current?.avg_resolucion_horas ?? kpi.avg_resolucion_horas).toFixed(1)} h`
+                : "—"}
+            </div>
+          </div>
+        </div>
+
+        {showStats && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-lg text-gray-800">Distribución por Departamento</h3>
+              <button
+                onClick={fetchDistribution}
+                className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2"
+              >
+                <BarChart3 className={`w-4 h-4 ${distLoading ? "animate-pulse" : ""}`} />
+                {distLoading ? "Cargando..." : "Cargar estadísticas"}
+              </button>
+            </div>
+            {distStats.length > 0 ? (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {distStats.map((item, idx) => (
+                  <div
+                    key={`${item.depto}-${idx}`}
+                    className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500"
+                  >
+                    <div className="text-sm text-gray-600">{item.depto}</div>
+                    <div className="text-2xl font-bold text-orange-600">
+                      {Number(item.porc).toFixed(1)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 bg-white rounded border text-gray-600">
+                No hay datos. Presiona "Cargar estadísticas".
+              </div>
+            )}
           </div>
         )}
 
-        {/* Tickets Display */}
-        {loadError ? (
+        {dashLoadError ? (
           <div className="text-center py-6 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {loadError}
+            {dashLoadError}
           </div>
         ) : filteredTickets.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-lg shadow">
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 text-lg">
-              No hay fichas {statusFilter === "0" ? "abiertas" : "cerradas"}
-              {showAllOpen ? " en este plantel" : " con los filtros seleccionados"}
+              No hay fichas {dashStatusFilter === "0" ? "abiertas" : "cerradas"}
+              {dashShowAllOpen ? " en este plantel" : " con los filtros seleccionados"} — usa "Cargar/Actualizar" para consultar.
             </p>
           </div>
         ) : (
@@ -1422,6 +1615,32 @@ export default function ParentAttentionSystem() {
         {currentView === "form" && <TicketForm />}
         {currentView === "departments" && <DepartmentManager />}
       </main>
+
+      <Overlay
+        open={followModalOpen}
+        onClose={() => setFollowModalOpen(false)}
+        title="Seguimiento de ficha"
+      >
+        {followTicket ? (
+          <FollowupForm
+            ticket={followTicket}
+            depts={followDepts}
+            onSaved={async () => {
+              try {
+                const res = await fetch(`/api/tickets/${followTicket.id}`, { cache: "no-store" });
+                if (res.ok) {
+                  const data = await res.json();
+                  setFollowTicket(data);
+                }
+              } catch { /* ignore */ }
+              // Inform user they can refresh manually
+              refreshTicketsAndKpi();
+            }}
+          />
+        ) : (
+          <div className="text-gray-600">Cargando ficha…</div>
+        )}
+      </Overlay>
     </div>
   );
 }

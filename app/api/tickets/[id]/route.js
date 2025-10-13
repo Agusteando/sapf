@@ -45,7 +45,7 @@ export async function PUT(request, context = { params: {} }) {
 
     await connection.execute(
       "UPDATE fichas_atencion SET resolution = ?, status = ?, updated_at = NOW() WHERE id = ?",
-      [resolution, status, id]
+      [resolution || "", status, id]
     );
 
     const [tickets] = await connection.execute(
@@ -53,9 +53,21 @@ export async function PUT(request, context = { params: {} }) {
       [id]
     );
 
-    if (target_department && tickets.length > 0) {
-      const ticket = tickets[0];
-      const folioNumber = ticket.folio_number;
+    if (!tickets || tickets.length === 0) {
+      return NextResponse.json({ error: "Ticket not found after update" }, { status: 404 });
+    }
+
+    const ticket = tickets[0];
+    const folioNumber = ticket.folio_number;
+
+    // Append seguimiento whenever a non-empty resolution is provided
+    const shouldAppendFollowup = typeof resolution === "string" && resolution.trim().length > 0;
+    if (shouldAppendFollowup) {
+      const followupTarget =
+        (target_department && String(target_department)) ||
+        ticket.target_department ||
+        ticket.original_department ||
+        "";
 
       await connection.execute(
         `INSERT INTO seguimiento (
@@ -80,12 +92,12 @@ export async function PUT(request, context = { params: {} }) {
           folioNumber,
           ticket.parent_name,
           ticket.reason,
-          resolution,
+          resolution || "",
           ticket.campus,
           ticket.contact_method,
           ticket.department_email,
           status,
-          target_department,
+          followupTarget,
           ticket.is_complaint ? 1 : 0,
           ticket.appointment_date || null,
           ticket.student_name,
@@ -94,9 +106,9 @@ export async function PUT(request, context = { params: {} }) {
           ticket.school_code || ticket.campus || "",
         ]
       );
-      console.log("[api/tickets/:id][PUT] appended seguimiento for folio:", folioNumber);
+      console.log("[api/tickets/:id][PUT] appended seguimiento for folio:", folioNumber, "target:", followupTarget);
     } else {
-      console.log("[api/tickets/:id][PUT] no target_department => no seguimiento appended");
+      console.log("[api/tickets/:id][PUT] resolution empty => no seguimiento appended");
     }
 
     return NextResponse.json({ success: true });

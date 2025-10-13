@@ -7,7 +7,7 @@ import { computeWeakETagFromString } from "@/lib/etag";
 
 export const runtime = "nodejs";
 
-// Simple in-memory throttle map to short-circuit identical, rapid repeat requests per client+query.
+// Lightweight server-side throttle to suppress rapid repeats per client+query
 const throttleMap = new Map(); // key => { ts: number }
 function getClientIp(request) {
   const xf = request.headers.get("x-forwarded-for") || "";
@@ -15,6 +15,9 @@ function getClientIp(request) {
   const ip = (xf.split(",")[0] || xr || "anon").trim();
   return ip || "anon";
 }
+
+// Track last known ETag per cache key to short-circuit with 304 without recomputing payload
+const lastEtagMeta = new Map(); // key => { etag: string, expiresAt: number }
 
 function monthRange(yyyyMm) {
   const ok = /^\d{4}-\d{2}$/.test(yyyyMm);
@@ -56,31 +59,44 @@ export async function GET(request, context = { params: {} }) {
     const includeFollowups = searchParams.get("includeFollowups") === "true";
     const ifNoneMatch = request.headers.get("if-none-match") || "";
 
-    console.log("[api/dashboard][GET] params:", {
-      campus, status, schoolYear, month, showAllOpen, includeFollowups
-    });
-
-    // Server-side throttle: if identical query from same client repeats within the below window, short-circuit.
-    const ip = getClientIp(request);
-    const throttleKey = `${ip}|campus=${campus || ""}|status=${status || ""}|sy=${schoolYear || ""}|m=${month || ""}|open=${showAllOpen ? "1" : "0"}|fu=${includeFollowups ? "1" : "0"}`;
-    const last = throttleMap.get(throttleKey)?.ts || 0;
-    const nowTs = Date.now();
     const isOpenAll = showAllOpen && status === "0";
-    const throttleWindowMs = isOpenAll ? 1500 : 700; // conservative; complements server microcache
-    if (nowTs - last < throttleWindowMs) {
-      // Minimal log to confirm throttle effectiveness
-      console.warn("[api/dashboard] throttled repeat request:", throttleKey);
+
+    // Server-side throttle per IP+query to prevent spammy calls
+    const ip = getClientIp(request);
+    const tKey = `${ip}|dashboard|campus=${campus || ""}|status=${status || ""}|openAll=${isOpenAll ? "1" : "0"}|sy=${schoolYear || ""}|m=${month || ""}`;
+    const last = throttleMap.get(tKey)?.ts || 0;
+    const nowTs = Date.now();
+    const windowMs = isOpenAll ? 2500 : 900; // stricter for heavy openAll
+    if (nowTs - last < windowMs) {
       const res204 = new NextResponse(null, { status: 204 });
       res204.headers.set("x-throttle", "dashboard");
+      res204.headers.set("x-throttle-window", String(windowMs));
+      res204.headers.set("Cache-Control", "no-store");
+      res204.headers.set("x-throttle-key", tKey);
       return res204;
     }
-    throttleMap.set(throttleKey, { ts: nowTs });
+    throttleMap.set(tKey, { ts: nowTs });
 
     const key = cacheKey({ campus, status, schoolYear, month, showAllOpen });
-    const hadCached = Boolean(getCache(key));
 
-    // Tuned TTLs; openAll view is most spammy => longer TTL.
-    const ttlMs = isOpenAll ? 30_000 : 8_000;
+    // Early ETag short-circuit: if client presents matching ETag and we are within TTL, respond 304 without recomputing
+    const ttlMs = isOpenAll ? 60_000 : 8_000; // Longer TTL for openAll to minimize DB load
+    const meta = lastEtagMeta.get(key);
+    if (ifNoneMatch && meta && meta.etag === ifNoneMatch && meta.expiresAt > Date.now()) {
+      const res304 = new NextResponse(null, { status: 304 });
+      res304.headers.set("ETag", meta.etag);
+      res304.headers.set("x-cache", "dashboard-early-304");
+      res304.headers.set("x-microcache", getCache(key) ? "HIT" : "MISS");
+      res304.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=30");
+      res304.headers.set("x-key", key);
+      return res304;
+    }
+
+    console.log("[api/dashboard][GET] params:", {
+      campus, status, schoolYear, month, showAllOpen, includeFollowups, ip
+    });
+
+    const hadCached = Boolean(getCache(key));
 
     const result = await wrapCache(key, ttlMs, async () => {
       const pool = await getConnection();
@@ -93,7 +109,6 @@ export async function GET(request, context = { params: {} }) {
       let dateClause = "1=1";
       const dateParams = [];
       if (isOpenAll) {
-        // explicitly skip date filter for open-all to let operators scan all open tickets
         console.log("[api/dashboard] openAll => skipping dateClause");
       } else if (month) {
         const r = monthRange(month);
@@ -162,18 +177,12 @@ export async function GET(request, context = { params: {} }) {
       `;
       const kParams = [...campusClause.params, ...dateParams];
 
-      console.log("[api/dashboard] tickets SQL:", ticketsSql.replace(/\s+/g, " ").trim());
-      console.log("[api/dashboard] tickets params:", tParams);
-      console.log("[api/dashboard] kpi SQL:", kpiSql.replace(/\s+/g, " ").trim());
-      console.log("[api/dashboard] kpi params:", kParams);
-      console.log("[api/dashboard] shouldFetchFollowups:", shouldFetchFollowups, "rowLimit:", rowLimit);
+      console.log("[api/dashboard] sql params:", { tParamsLen: tParams.length, kParamsLen: kParams.length, rowLimit, shouldFetchFollowups, key });
 
       const [[tickets], [kpi]] = await Promise.all([
         pool.execute(ticketsSql, tParams),
         pool.execute(kpiSql, kParams),
       ]);
-
-      console.log("[api/dashboard] tickets count:", tickets?.length || 0);
 
       // If no tickets returned, log distinct campus labels (prefer school_code) to help diagnose mismatches
       if (Array.isArray(tickets) && tickets.length === 0 && campus) {
@@ -201,7 +210,6 @@ export async function GET(request, context = { params: {} }) {
         const folios = tickets.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
         const fuSql = `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`;
-        console.log("[api/dashboard] followups SQL:", fuSql, "folios:", folios.length);
         const [rows] = await pool.execute(fuSql, folios);
         followupsCount = rows?.length || 0;
         const byTicket = new Map();
@@ -214,8 +222,6 @@ export async function GET(request, context = { params: {} }) {
           const folio = t.folio_number || String(t.id).padStart(5, "0");
           t.followups = byTicket.get(folio) || [];
         }
-      } else if (!shouldFetchFollowups) {
-        console.log("[api/dashboard] followups skipped.");
       }
 
       const k = kpi?.[0] || {
@@ -226,13 +232,14 @@ export async function GET(request, context = { params: {} }) {
         avg_resolucion_horas: null,
       };
 
-      console.log("[api/dashboard] KPI:", k, "followupsCount:", followupsCount);
-
       return { tickets, kpi: k, _debug: { followupsCount } };
     });
 
     const jsonStr = JSON.stringify(result);
     const etag = computeWeakETagFromString(jsonStr);
+
+    // Persist ETag metadata for early 304s within the TTL window
+    lastEtagMeta.set(key, { etag, expiresAt: Date.now() + (isOpenAll ? 60_000 : 8_000) });
 
     // If client already has same payload, short-circuit to 304.
     if (ifNoneMatch && ifNoneMatch === etag) {
@@ -241,6 +248,7 @@ export async function GET(request, context = { params: {} }) {
       res304.headers.set("x-cache", "dashboard-304");
       res304.headers.set("x-microcache", hadCached ? "HIT" : "MISS");
       res304.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=30");
+      res304.headers.set("x-key", key);
       return res304;
     }
 
@@ -252,6 +260,7 @@ export async function GET(request, context = { params: {} }) {
         "x-microcache": hadCached ? "HIT" : "MISS",
         "x-followups-count": String(result?._debug?.followupsCount ?? 0),
         "Cache-Control": "private, max-age=10, stale-while-revalidate=30",
+        "x-key": key,
       },
     });
     return res;

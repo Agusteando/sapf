@@ -6,6 +6,15 @@ import { wrapCache, getCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
+// Lightweight server-side throttle to suppress rapid repeats per client+query
+const throttleMap = new Map(); // key => { ts: number }
+function getClientIp(request) {
+  const xf = request.headers.get("x-forwarded-for") || "";
+  const xr = request.headers.get("x-real-ip") || "";
+  const ip = (xf.split(",")[0] || xr || "anon").trim();
+  return ip || "anon";
+}
+
 function monthRange(yyyyMm) {
   const ok = /^\d{4}-\d{2}$/.test(yyyyMm);
   if (!ok) return null;
@@ -43,6 +52,23 @@ export async function GET(request, context = { params: {} }) {
     const month = searchParams.get("month");
     const showAllOpen = searchParams.get("showAllOpen") === "true";
 
+    const isOpenAll = showAllOpen && status === "0";
+
+    // Server-side throttle per IP+query to prevent spammy calls
+    const ip = getClientIp(request);
+    const tKey = `${ip}|tickets|campus=${campus || ""}|status=${status || ""}|openAll=${isOpenAll ? "1" : "0"}|sy=${schoolYear || ""}|m=${month || ""}`;
+    const last = throttleMap.get(tKey)?.ts || 0;
+    const nowTs = Date.now();
+    const windowMs = isOpenAll ? 2500 : 900;
+    if (nowTs - last < windowMs) {
+      const res204 = new NextResponse(null, { status: 204 });
+      res204.headers.set("x-throttle", "tickets");
+      res204.headers.set("x-throttle-window", String(windowMs));
+      res204.headers.set("Cache-Control", "no-store");
+      return res204;
+    }
+    throttleMap.set(tKey, { ts: nowTs });
+
     console.log("[api/tickets][GET] query params:", {
       campus, status, schoolYear, month, showAllOpen,
     });
@@ -51,7 +77,7 @@ export async function GET(request, context = { params: {} }) {
     const hadCached = Boolean(getCache(key));
 
     // More generous microcache for openAll to cut DB load drastically
-    const ttl = status === "0" && showAllOpen ? 25_000 : 10_000;
+    const ttl = status === "0" && showAllOpen ? 60_000 : 10_000;
 
     const resultRows = await wrapCache(key, ttl, async () => {
       const pool = await getConnection();
@@ -93,9 +119,9 @@ export async function GET(request, context = { params: {} }) {
         qParams.push(status);
       }
 
-      const isOpenAll = showAllOpen && status === "0";
+      const isOpenAllLocal = isOpenAll;
 
-      if (isOpenAll) {
+      if (isOpenAllLocal) {
         console.log("[api/tickets][GET] openAll=true => skipping date filter");
       } else if (month) {
         const range = monthRange(month);
@@ -113,44 +139,20 @@ export async function GET(request, context = { params: {} }) {
         query += " AND MONTH(f.fecha) = MONTH(NOW()) AND YEAR(f.fecha) = YEAR(NOW())";
       }
 
-      const rowLimit = isOpenAll ? 150 : 400;
+      const rowLimit = isOpenAllLocal ? 150 : 400;
       query += ` ORDER BY f.fecha DESC LIMIT ${rowLimit}`;
 
-      console.log("[api/tickets][GET] SQL:", query.replace(/\s+/g, " ").trim());
-      console.log("[api/tickets][GET] Params:", qParams);
+      console.log("[api/tickets][GET] ParamsLen:", qParams.length, "rowLimit:", rowLimit);
 
       const [rows] = await pool.execute(query, qParams);
       console.log("[api/tickets][GET] tickets rows:", rows?.length || 0);
 
-      // If no tickets returned, log distinct campus values to help diagnose mismatches
-      if (Array.isArray(rows) && rows.length === 0 && campus) {
-        try {
-          const [distinct] = await pool.execute(
-            `SELECT 
-               TRIM(UPPER(COALESCE(school_code, campus))) AS campus_norm, 
-               school_code AS school_code_raw,
-               campus AS campus_raw, 
-               COUNT(*) AS cnt
-             FROM fichas_atencion
-             GROUP BY campus_norm, school_code_raw, campus_raw
-             ORDER BY cnt DESC
-             LIMIT 20`
-          );
-          console.warn("[api/tickets][GET] No tickets found. Top distinct campus values:", distinct);
-        } catch (e) {
-          console.warn("[api/tickets][GET] distinct campus probe failed:", e?.message || e);
-        }
-      }
-
       // Avoid followups in heavy openAll mode
-      if (!isOpenAll && rows.length > 0) {
+      if (!isOpenAllLocal && rows.length > 0) {
         const folios = rows.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
         const fuSql = `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`;
-        console.log("[api/tickets][GET] Followups SQL:", fuSql, "count folios:", folios.length);
         const [fu] = await pool.execute(fuSql, folios);
-        console.log("[api/tickets][GET] followups rows:", fu?.length || 0);
-
         const map = new Map();
         for (const r of fu) {
           const list = map.get(r.ticket_id) || [];
@@ -161,7 +163,7 @@ export async function GET(request, context = { params: {} }) {
           const folio = t.folio_number || String(t.id).padStart(5, "0");
           t.followups = map.get(folio) || [];
         }
-      } else if (isOpenAll) {
+      } else if (isOpenAllLocal) {
         console.log("[api/tickets][GET] Skipping followups for openAll view to reduce load.");
       }
 
