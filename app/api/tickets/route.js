@@ -38,8 +38,8 @@ function getSchoolYearRange(schoolYear) {
   return { start, endExclusive };
 }
 
-function buildKey({ campus, status, schoolYear, month, showAllOpen }) {
-  return `tickets:${campus || "all"}:${status ?? "all"}:${schoolYear || ""}:${month || ""}:${showAllOpen ? "openAll" : "filtered"}`;
+function buildKey({ campus, status, schoolYear, month }) {
+  return `tickets:${campus || "all"}:${status ?? "all"}:${schoolYear || ""}:${month || ""}`;
 }
 
 function buildTicketEmailHTML({ folio, campus, dept, parentName, studentName, reason, resolution, createdBy, contactMethod, appointmentDate }) {
@@ -109,16 +109,13 @@ export async function GET(request, context = { params: {} }) {
     const status = searchParams.get("status");
     const schoolYear = searchParams.get("schoolYear");
     const month = searchParams.get("month");
-    const showAllOpen = searchParams.get("showAllOpen") === "true";
-
-    const isOpenAll = showAllOpen && status === "0";
 
     // Server-side throttle per IP+query to prevent spammy calls
     const ip = getClientIp(request);
-    const tKey = `${ip}|tickets|campus=${campus || ""}|status=${status || ""}|openAll=${isOpenAll ? "1" : "0"}|sy=${schoolYear || ""}|m=${month || ""}`;
+    const tKey = `${ip}|tickets|campus=${campus || ""}|status=${status || ""}|sy=${schoolYear || ""}|m=${month || ""}`;
     const last = throttleMap.get(tKey)?.ts || 0;
     const nowTs = Date.now();
-    const windowMs = isOpenAll ? 2500 : 900;
+    const windowMs = 900;
     if (nowTs - last < windowMs) {
       const res204 = new NextResponse(null, { status: 204 });
       res204.headers.set("x-throttle", "tickets");
@@ -129,14 +126,13 @@ export async function GET(request, context = { params: {} }) {
     throttleMap.set(tKey, { ts: nowTs });
 
     console.log("[api/tickets][GET] query params:", {
-      campus, status, schoolYear, month, showAllOpen,
+      campus, status, schoolYear, month,
     });
 
-    const key = buildKey({ campus, status, schoolYear, month, showAllOpen });
+    const key = buildKey({ campus, status, schoolYear, month });
     const hadCached = Boolean(getCache(key));
 
-    // More generous microcache for openAll to cut DB load drastically
-    const ttl = status === "0" && showAllOpen ? 60_000 : 10_000;
+    const ttl = 10_000;
 
     const resultRows = await wrapCache(key, ttl, async () => {
       const pool = await getConnection();
@@ -178,11 +174,7 @@ export async function GET(request, context = { params: {} }) {
         qParams.push(status);
       }
 
-      const isOpenAllLocal = isOpenAll;
-
-      if (isOpenAllLocal) {
-        console.log("[api/tickets][GET] openAll=true => skipping date filter");
-      } else if (month) {
+      if (month) {
         const range = monthRange(month);
         if (range) {
           query += " AND f.fecha >= ? AND f.fecha < ?";
@@ -198,7 +190,7 @@ export async function GET(request, context = { params: {} }) {
         query += " AND MONTH(f.fecha) = MONTH(NOW()) AND YEAR(f.fecha) = YEAR(NOW())";
       }
 
-      const rowLimit = isOpenAllLocal ? 150 : 400;
+      const rowLimit = 400;
       query += ` ORDER BY f.fecha DESC LIMIT ${rowLimit}`;
 
       console.log("[api/tickets][GET] ParamsLen:", qParams.length, "rowLimit:", rowLimit);
@@ -206,8 +198,7 @@ export async function GET(request, context = { params: {} }) {
       const [rows] = await pool.execute(query, qParams);
       console.log("[api/tickets][GET] tickets rows:", rows?.length || 0);
 
-      // Avoid followups in heavy openAll mode
-      if (!isOpenAllLocal && rows.length > 0) {
+      if (rows.length > 0) {
         const folios = rows.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
         const placeholders = folios.map(() => "?").join(", ");
         const fuSql = `SELECT * FROM seguimiento WHERE ticket_id IN (${placeholders}) ORDER BY fecha ASC`;
@@ -222,8 +213,6 @@ export async function GET(request, context = { params: {} }) {
           const folio = t.folio_number || String(t.id).padStart(5, "0");
           t.followups = map.get(folio) || [];
         }
-      } else if (isOpenAllLocal) {
-        console.log("[api/tickets][GET] Skipping followups for openAll view to reduce load.");
       }
 
       return rows;

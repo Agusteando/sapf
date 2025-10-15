@@ -274,7 +274,6 @@ export default function ParentAttentionSystem() {
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
   const [dashSchoolYear, setDashSchoolYear] = useState("");
   const [dashSelectedMonth, setDashSelectedMonth] = useState("");
-  const [dashShowAllOpen, setDashShowAllOpen] = useState(true);
   const [dashLastLoadedAt, setDashLastLoadedAt] = useState(null);
   const [dashLoadError, setDashLoadError] = useState("");
 
@@ -478,94 +477,185 @@ export default function ParentAttentionSystem() {
     return Array.from(map.values());
   }, [departments]);
 
-  const submitTicket = async () => {
-    if (!formData.parentName || !formData.reason || !formData.resolution) {
-      alert("Por favor complete todos los campos requeridos");
-      return;
+  // Compute default month for a given school year: current month if it belongs to that cycle; otherwise August (start)
+  const defaultMonthForSchoolYear = useCallback((sy) => {
+    try {
+      const [startYearStr, endYearStr] = String(sy || "").split("-");
+      const startYear = parseInt(startYearStr, 10);
+      const endYear = parseInt(endYearStr, 10);
+      if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return "";
+
+      const now = new Date();
+      const nowY = now.getFullYear();
+      const nowM = now.getMonth(); // 0-based
+      // School year runs Aug (7) to July (6) of next year
+      const inFirstSpan = nowY === startYear && nowM >= 7; // Aug-Dec of startYear
+      const inSecondSpan = nowY === endYear && nowM <= 6;   // Jan-Jul of endYear
+
+      if (inFirstSpan || inSecondSpan) {
+        // Build yyyy-mm from current date while clamping into cycle's year
+        const yyyy = inFirstSpan ? startYear : endYear;
+        const mm = String(nowM + 1).padStart(2, "0");
+        return `${yyyy}-${mm}`;
+      }
+      // Fallback to August of start year
+      return `${startYear}-08`;
+    } catch {
+      return "";
     }
+  }, []);
 
-    await trackAsync(async () => {
-      try {
-        const departmentEmail = departments[formData.selectedDepartment]?.[0]?.email || "";
+  // Ensure dashSelectedMonth is set to a valid month for the currently selected school year
+  useEffect(() => {
+    if (!dashSchoolYear) return;
+    setDashSelectedMonth((prev) => {
+      if (prev) return prev;
+      return defaultMonthForSchoolYear(dashSchoolYear);
+    });
+  }, [dashSchoolYear, defaultMonthForSchoolYear]);
 
-        const response = await fetch("/api/tickets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
-          body: JSON.stringify({
-            campus: selectedCampus,
-            contact_method: formData.contactMethod,
-            is_complaint: formData.isComplaint ? 1 : 0,
-            parent_name: formData.parentName,
-            student_name: formData.studentName,
-            phone_number: formData.phoneNumber,
-            parent_email: formData.parentEmail,
-            reason: formData.reason,
-            resolution: formData.resolution,
-            appointment_date: formData.noAppointment ? null : formData.appointmentDate,
-            target_department: formData.targetDepartment,
-            department_email: departmentEmail,
-            created_by: "Current User",
-            original_department: formData.selectedDepartment || "General",
-            status: formData.status,
-            cc_emails: formData.ccEmails
-          }),
-        });
+  const monthsForSchoolYear = useMemo(() => {
+    if (!dashSchoolYear) return [];
+    const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
+    const arr = [];
+    for (let m = 7; m < 12; m++) {
+      const date = new Date(startYear, m, 1);
+      arr.push({
+        value: `${startYear}-${String(m + 1).padStart(2, "0")}`,
+        label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
+      });
+    }
+    for (let m = 0; m < 7; m++) {
+      const date = new Date(endYear, m, 1);
+      arr.push({
+        value: `${endYear}-${String(m + 1).padStart(2, "0")}`,
+        label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
+      });
+    }
+    return arr;
+  }, [dashSchoolYear]);
 
-        const result = await response.json();
-        if (response.ok && result.success) {
-          alert(`Ficha generada exitosamente. Folio: ${result.folioNumber}`);
-          setFormData({
-            contactMethod: "email",
-            isComplaint: false,
-            parentName: "",
-            studentName: "",
-            phoneNumber: "",
-            parentEmail: "",
-            reason: "",
-            resolution: "",
-            appointmentDate: new Date().toISOString().slice(0, 16),
-            noAppointment: false,
-            targetDepartment: "",
-            status: "0",
-            selectedDepartment: Object.keys(departments)[0] || "Enfermería",
-            existingOpenTicketId: null,
-            studentPhotoUrl: "",
-            ccEmails: []
-          });
-        } else {
-          alert(result?.error || "No se pudo generar la ficha");
+  const buildDashboardQS = useCallback(() => {
+    let qs = `campus=${encodeURIComponent(selectedCampus)}`;
+    if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
+      qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
+    }
+    if (dashSelectedMonth) {
+      qs += `&month=${encodeURIComponent(dashSelectedMonth)}`;
+    } else if (dashSchoolYear) {
+      qs += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
+    }
+    return qs;
+  }, [selectedCampus, dashStatusFilter, dashSelectedMonth, dashSchoolYear]);
+
+  useEffect(() => {
+    let abort = false;
+    async function fetchDashboard() {
+      setKpiLoading(true);
+      setDashLoadError("");
+      await trackAsync(async () => {
+        try {
+          const url = `/api/dashboard?${buildDashboardQS()}`;
+          const res = await fetch(url, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+          if (abort) return;
+          if (res.status === 204) {
+            setKpiLoading(false);
+            return;
+          }
+          if (!res.ok) {
+            const t = await res.text().catch(() => "");
+            console.warn("[Dashboard] not ok", res.status, t.slice(0, 200));
+            setTickets([]);
+            setDashLoadError("No se pudo cargar la información.");
+            setKpiLoading(false);
+            return;
+          }
+          const data = await res.json();
+          setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
+          if (data?.kpi) {
+            const next = {
+              total: Number(data.kpi.total || 0),
+              abiertos: Number(data.kpi.abiertos || 0),
+              cerrados: Number(data.kpi.cerrados || 0),
+              quejas: Number(data.kpi.quejas || 0),
+              avg_resolucion_horas: data.kpi.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
+            };
+            lastGoodKpiRef.current = next;
+            setKpi(next);
+          }
+          setDashLastLoadedAt(new Date());
+        } catch (e) {
+          if (!abort) {
+            console.error("[Dashboard] fetch error", e);
+            setDashLoadError("Error de red.");
+            setTickets([]);
+          }
         }
-      } catch (error) {
-        console.error("Error submitting ticket:", error);
-        alert("Error al generar la ficha");
-      }
-    });
-  };
+        if (!abort) setKpiLoading(false);
+      });
+    }
+    if (currentView === "dashboard") {
+      fetchDashboard();
+    }
+    return () => { abort = true; };
+  }, [currentView, selectedCampus, dashStatusFilter, dashSelectedMonth, dashSchoolYear, buildDashboardQS, trackAsync]);
 
-  const updateDepartment = async (deptName, email, supervisor) => {
-    await trackAsync(async () => {
-      try {
-        await fetch(`/api/departments/${selectedCampus}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
-          body: JSON.stringify({
-            email,
-            department_name: deptName,
-            supervisor_email: supervisor,
-          }),
-        });
-        alert("Departamento actualizado exitosamente");
-        fetchDepartments();
-        setEditingDept(null);
-      } catch (error) {
-        console.error("Error updating department:", error);
-        alert("Error al actualizar departamento");
-      }
-    });
-  };
+  useEffect(() => {
+    let abort = false;
+    async function fetchDistribution() {
+      setDistLoading(true);
+      await trackAsync(async () => {
+        try {
+          let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
+          if (dashSelectedMonth) {
+            distUrl += `&month=${encodeURIComponent(dashSelectedMonth)}`;
+          } else if (dashSchoolYear) {
+            distUrl += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
+          }
+          const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" } });
+          if (abort) return;
+          const data = await res.json();
+          setDistStats(Array.isArray(data) ? data : []);
+        } catch (err) {
+          if (!abort) console.error("Error fetching distribution stats:", err);
+        }
+        if (!abort) setDistLoading(false);
+      });
+    }
+    if (currentView === "dashboard" && showStats) {
+      fetchDistribution();
+    }
+    return () => { abort = true; };
+  }, [currentView, showStats, selectedCampus, dashSelectedMonth, dashSchoolYear, trackAsync]);
+
+  // Export current month range to Excel
+  function computeMonthRange(yyyyMm) {
+    if (!/^\d{4}-\d{2}$/.test(String(yyyyMm || ""))) return null;
+    const [yStr, mStr] = yyyyMm.split("-");
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10) - 1;
+    const start = new Date(y, m, 1, 0, 0, 0);
+    const end = new Date(y, m + 1, 0, 23, 59, 59); // last day 23:59:59
+    return {
+      start: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")} 00:00:00`,
+      end: `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")} 23:59:59`,
+    };
+  }
 
   const exportToExcel = () => {
-    window.open(`/api/export-excel?campus=${selectedCampus}&status=`, "_blank");
+    const base = `/api/export-excel?campus=${encodeURIComponent(selectedCampus)}&status=`;
+    const r = computeMonthRange(dashSelectedMonth);
+    if (r) {
+      window.open(`${base}&startDate=${encodeURIComponent(r.start)}&endDate=${encodeURIComponent(r.end)}`, "_blank");
+    } else if (dashSchoolYear) {
+      // fallback to full school year
+      const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
+      const start = `${startYear}-08-01 00:00:00`;
+      const end = `${endYear}-08-01 00:00:00`;
+      window.open(`${base}&startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`, "_blank");
+    } else {
+      window.open(base, "_blank");
+    }
   };
 
   function holderDisplayFor(deptName) {
@@ -1399,125 +1489,6 @@ export default function ParentAttentionSystem() {
     );
   };
 
-  // Auto-fetch dashboard and stats whenever filters or plantel change
-  const monthsForSchoolYear = useMemo(() => {
-    if (!dashSchoolYear) return [];
-    const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
-    const arr = [];
-    for (let m = 7; m < 12; m++) {
-      const date = new Date(startYear, m, 1);
-      arr.push({
-        value: `${startYear}-${String(m + 1).padStart(2, "0")}`,
-        label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
-      });
-    }
-    for (let m = 0; m < 7; m++) {
-      const date = new Date(endYear, m, 1);
-      arr.push({
-        value: `${endYear}-${String(m + 1).padStart(2, "0")}`,
-        label: date.toLocaleDateString("es-MX", { month: "long", year: "numeric" }),
-      });
-    }
-    return arr;
-  }, [dashSchoolYear]);
-
-  const buildDashboardQS = useCallback(() => {
-    let qs = `campus=${encodeURIComponent(selectedCampus)}`;
-    if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
-      qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
-    }
-    if (dashShowAllOpen && dashStatusFilter === "0") {
-      qs += `&showAllOpen=true`;
-    } else if (dashSelectedMonth) {
-      qs += `&month=${encodeURIComponent(dashSelectedMonth)}`;
-    } else if (dashSchoolYear) {
-      qs += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
-    }
-    return qs;
-  }, [selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear]);
-
-  useEffect(() => {
-    let abort = false;
-    async function fetchDashboard() {
-      setKpiLoading(true);
-      setDashLoadError("");
-      await trackAsync(async () => {
-        try {
-          const url = `/api/dashboard?${buildDashboardQS()}`;
-          const res = await fetch(url, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-          if (abort) return;
-          if (res.status === 204) {
-            setKpiLoading(false);
-            return;
-          }
-          if (!res.ok) {
-            const t = await res.text().catch(() => "");
-            console.warn("[Dashboard] not ok", res.status, t.slice(0, 200));
-            setTickets([]);
-            setDashLoadError("No se pudo cargar la información.");
-            setKpiLoading(false);
-            return;
-          }
-          const data = await res.json();
-          setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
-          if (data?.kpi) {
-            const next = {
-              total: Number(data.kpi.total || 0),
-              abiertos: Number(data.kpi.abiertos || 0),
-              cerrados: Number(data.kpi.cerrados || 0),
-              quejas: Number(data.kpi.quejas || 0),
-              avg_resolucion_horas: data.kpi.avg_resolucion_horas !== null ? Number(data.kpi.avg_resolucion_horas) : null,
-            };
-            lastGoodKpiRef.current = next;
-            setKpi(next);
-          }
-          setDashLastLoadedAt(new Date());
-        } catch (e) {
-          if (!abort) {
-            console.error("[Dashboard] fetch error", e);
-            setDashLoadError("Error de red.");
-            setTickets([]);
-          }
-        }
-        if (!abort) setKpiLoading(false);
-      });
-    }
-    if (currentView === "dashboard") {
-      fetchDashboard();
-    }
-    return () => { abort = true; };
-  }, [currentView, selectedCampus, dashStatusFilter, dashShowAllOpen, dashSelectedMonth, dashSchoolYear, buildDashboardQS, trackAsync]);
-
-  useEffect(() => {
-    let abort = false;
-    async function fetchDistribution() {
-      setDistLoading(true);
-      await trackAsync(async () => {
-        try {
-          let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
-          if (!(dashShowAllOpen && dashStatusFilter === "0")) {
-            if (dashSelectedMonth) {
-              distUrl += `&month=${encodeURIComponent(dashSelectedMonth)}`;
-            } else if (dashSchoolYear) {
-              distUrl += `&schoolYear=${encodeURIComponent(dashSchoolYear)}`;
-            }
-          }
-          const res = await fetch(distUrl, { cache: "no-store", headers: { "x-client": "sapf-app" } });
-          if (abort) return;
-          const data = await res.json();
-          setDistStats(Array.isArray(data) ? data : []);
-        } catch (err) {
-          if (!abort) console.error("Error fetching distribution stats:", err);
-        }
-        if (!abort) setDistLoading(false);
-      });
-    }
-    if (currentView === "dashboard" && showStats) {
-      fetchDistribution();
-    }
-    return () => { abort = true; };
-  }, [currentView, showStats, selectedCampus, dashShowAllOpen, dashStatusFilter, dashSelectedMonth, dashSchoolYear, trackAsync]);
-
   const Dashboard = () => {
     const filteredTickets = tickets;
 
@@ -1536,7 +1507,7 @@ export default function ParentAttentionSystem() {
                 value={dashSchoolYear}
                 onChange={(e) => {
                   setDashSchoolYear(e.target.value);
-                  setDashSelectedMonth("");
+                  setDashSelectedMonth(""); // reset to default month for the selected school year
                 }}
               >
                 {schoolYears.map((year) => (
@@ -1554,7 +1525,6 @@ export default function ParentAttentionSystem() {
                 value={dashSelectedMonth}
                 onChange={(e) => setDashSelectedMonth(e.target.value)}
               >
-                <option value="">Todos</option>
                 {monthsForSchoolYear.map((month) => (
                   <option key={month.value} value={month.value}>
                     {month.label}
@@ -1602,20 +1572,6 @@ export default function ParentAttentionSystem() {
               </label>
             </div>
 
-            {dashStatusFilter === "0" && (
-              <label className="flex items-center gap-2 cursor-pointer px-4 py-2 border-2 border-blue-500 bg-blue-50 rounded-lg">
-                <input
-                  type="checkbox"
-                  checked={dashShowAllOpen}
-                  onChange={(e) => setDashShowAllOpen(e.target.checked)}
-                  className="text-blue-600"
-                />
-                <span className="font-medium text-blue-700">
-                  Ver todos los abiertos
-                </span>
-              </label>
-            )}
-
             <div className="flex gap-2">
               <button
                 onClick={exportToExcel}
@@ -1624,13 +1580,6 @@ export default function ParentAttentionSystem() {
                 <Download className="w-5 h-5" />
                 Exportar Excel
               </button>
-              <a
-                href="/compare"
-                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 flex items-center gap-2 shadow transition-all"
-              >
-                <TrendingUp className="w-5 h-5" />
-                Comparar planteles
-              </a>
             </div>
           </div>
 
@@ -1916,7 +1865,7 @@ export default function ParentAttentionSystem() {
               className="px-4 py-2 rounded-lg font-medium transition-all bg-orange-50 text-orange-700 hover:bg-orange-100"
             >
               <TrendingUp className="inline w-5 h-5 mr-2" />
-              Comparar Planteles
+              Comparar planteles
             </a>
           </div>
         </div>

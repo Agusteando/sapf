@@ -43,8 +43,8 @@ function schoolYearRange(schoolYear) {
   };
 }
 
-function cacheKey({ campus, status, schoolYear, month, showAllOpen }) {
-  return `dashboard:${campus || "all"}:${status ?? "all"}:${schoolYear || ""}:${month || ""}:${showAllOpen ? "openAll" : "filtered"}`;
+function cacheKey({ campus, status, schoolYear, month }) {
+  return `dashboard:${campus || "all"}:${status ?? "all"}:${schoolYear || ""}:${month || ""}`;
 }
 
 export async function GET(request, context = { params: {} }) {
@@ -55,18 +55,14 @@ export async function GET(request, context = { params: {} }) {
     const status = searchParams.get("status");
     const schoolYear = searchParams.get("schoolYear");
     const month = searchParams.get("month");
-    const showAllOpen = searchParams.get("showAllOpen") === "true";
-    const includeFollowups = searchParams.get("includeFollowups") === "true";
     const ifNoneMatch = request.headers.get("if-none-match") || "";
-
-    const isOpenAll = showAllOpen && status === "0";
 
     // Server-side throttle per IP+query to prevent spammy calls
     const ip = getClientIp(request);
-    const tKey = `${ip}|dashboard|campus=${campus || ""}|status=${status || ""}|openAll=${isOpenAll ? "1" : "0"}|sy=${schoolYear || ""}|m=${month || ""}`;
+    const tKey = `${ip}|dashboard|campus=${campus || ""}|status=${status || ""}|sy=${schoolYear || ""}|m=${month || ""}`;
     const last = throttleMap.get(tKey)?.ts || 0;
     const nowTs = Date.now();
-    const windowMs = isOpenAll ? 2500 : 900; // stricter for heavy openAll
+    const windowMs = 900;
     if (nowTs - last < windowMs) {
       const res204 = new NextResponse(null, { status: 204 });
       res204.headers.set("x-throttle", "dashboard");
@@ -77,10 +73,10 @@ export async function GET(request, context = { params: {} }) {
     }
     throttleMap.set(tKey, { ts: nowTs });
 
-    const key = cacheKey({ campus, status, schoolYear, month, showAllOpen });
+    const key = cacheKey({ campus, status, schoolYear, month });
 
-    // Early ETag short-circuit: if client presents matching ETag and we are within TTL, respond 304 without recomputing
-    const ttlMs = isOpenAll ? 60_000 : 8_000; // Longer TTL for openAll to minimize DB load
+    // Early ETag short-circuit: if client presents matching ETag and we are within TTL, respond 304 without recomputing payload
+    const ttlMs = 8_000;
     const meta = lastEtagMeta.get(key);
     if (ifNoneMatch && meta && meta.etag === ifNoneMatch && meta.expiresAt > Date.now()) {
       const res304 = new NextResponse(null, { status: 304 });
@@ -93,7 +89,7 @@ export async function GET(request, context = { params: {} }) {
     }
 
     console.log("[api/dashboard][GET] params:", {
-      campus, status, schoolYear, month, showAllOpen, includeFollowups, ip
+      campus, status, schoolYear, month, ip
     });
 
     const hadCached = Boolean(getCache(key));
@@ -108,9 +104,7 @@ export async function GET(request, context = { params: {} }) {
 
       let dateClause = "1=1";
       const dateParams = [];
-      if (isOpenAll) {
-        console.log("[api/dashboard] openAll => skipping dateClause");
-      } else if (month) {
+      if (month) {
         const r = monthRange(month);
         if (r) {
           dateClause = "f.fecha >= ? AND f.fecha < ?";
@@ -123,6 +117,7 @@ export async function GET(request, context = { params: {} }) {
           dateParams.push(r.start, r.endExclusive);
         }
       } else {
+        // Default to current month if none provided
         dateClause = "MONTH(f.fecha) = MONTH(NOW()) AND YEAR(f.fecha) = YEAR(NOW())";
       }
 
@@ -133,9 +128,8 @@ export async function GET(request, context = { params: {} }) {
         statusParams.push(status);
       }
 
-      // Dynamically limit rows and optionally skip followups to avoid hammering DB.
-      const rowLimit = isOpenAll ? 150 : 400;
-      const shouldFetchFollowups = includeFollowups ? true : !isOpenAll; // explicit override if requested
+      const rowLimit = 400;
+      const shouldFetchFollowups = true;
 
       const ticketsSql = `
         SELECT 
@@ -177,7 +171,7 @@ export async function GET(request, context = { params: {} }) {
       `;
       const kParams = [...campusClause.params, ...dateParams];
 
-      console.log("[api/dashboard] sql params:", { tParamsLen: tParams.length, kParamsLen: kParams.length, rowLimit, shouldFetchFollowups, key });
+      console.log("[api/dashboard] sql params:", { tParamsLen: tParams.length, kParamsLen: kParams.length, rowLimit, key });
 
       const [[tickets], [kpi]] = await Promise.all([
         pool.execute(ticketsSql, tParams),
@@ -204,7 +198,7 @@ export async function GET(request, context = { params: {} }) {
         }
       }
 
-      // Batch followups only when explicitly allowed
+      // Batch followups
       let followupsCount = 0;
       if (shouldFetchFollowups && tickets.length > 0) {
         const folios = tickets.map((t) => t.folio_number || String(t.id).padStart(5, "0"));
@@ -239,7 +233,7 @@ export async function GET(request, context = { params: {} }) {
     const etag = computeWeakETagFromString(jsonStr);
 
     // Persist ETag metadata for early 304s within the TTL window
-    lastEtagMeta.set(key, { etag, expiresAt: Date.now() + (isOpenAll ? 60_000 : 8_000) });
+    lastEtagMeta.set(key, { etag, expiresAt: Date.now() + 8_000 });
 
     // If client already has same payload, short-circuit to 304.
     if (ifNoneMatch && ifNoneMatch === etag) {
