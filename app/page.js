@@ -267,6 +267,7 @@ export default function ParentAttentionSystem() {
   const [institutionalNames, setInstitutionalNames] = useState({});
 
   // Dashboard state
+  thead: null;
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
   const [dashSchoolYear, setDashSchoolYear] = useState("");
   const [dashSelectedMonth, setDashSelectedMonth] = useState("");
@@ -301,13 +302,14 @@ export default function ParentAttentionSystem() {
     "Enfermería"
   ];
 
-  // Helper to present email with Directory displayName
+  // Helper to present email with Directory displayName using precomputed names
   const labelForEmail = useCallback((email, fallbackName = "") => {
-    const e = String(email || "");
+    const e = String(email || "").trim();
+    if (!e) return "";
     const lower = e.toLowerCase();
     const name = String(institutionalNames[lower] || fallbackName || "").trim();
     if (e && name) return `${name} <${e}>`;
-    return e || "";
+    return e;
   }, [institutionalNames]);
 
   // Load precomputed names once
@@ -397,7 +399,7 @@ export default function ParentAttentionSystem() {
     return names.sort((a, b) => a.localeCompare(b, "es"))[0];
   }
 
-  // Fetch departments for campus, enriched with display names
+  // Fetch departments for campus, enriched (now also uses combined labels from API)
   const fetchDepartments = useCallback(async () => {
     await trackAsync(async () => {
       try {
@@ -493,11 +495,13 @@ export default function ParentAttentionSystem() {
       for (const r of arr) {
         if (r?.email) {
           const e = String(r.email).toLowerCase();
-          list.push({ email: r.email, name: institutionalNames[e] || r.email_display_name || "" });
+          const name = institutionalNames[e] || r.email_display_name || "";
+          list.push({ email: r.email, name });
         }
         if (r?.supervisor_email) {
           const e2 = String(r.supervisor_email).toLowerCase();
-          list.push({ email: r.supervisor_email, name: institutionalNames[e2] || r.supervisor_display_name || "" });
+          const name2 = institutionalNames[e2] || r.supervisor_display_name || "";
+          list.push({ email: r.supervisor_email, name: name2 });
         }
       }
     }
@@ -691,24 +695,6 @@ export default function ParentAttentionSystem() {
     }
   };
 
-  function holderDisplayFor(deptName) {
-    const entry = departments?.[deptName]?.[0] || {};
-    const maybeName =
-      entry.responsable_name ||
-      entry.display_name ||
-      entry.in_charge_name ||
-      entry.incharge_name ||
-      entry.owner_name ||
-      entry.supervisor_name ||
-      entry.name ||
-      entry.full_name ||
-      entry.supervisor_display_name ||
-      entry.email_display_name ||
-      "";
-    const email = entry.email || "";
-    return labelForEmail(email, maybeName);
-  }
-
   // Restore missing submitTicket function
   const submitTicket = async () => {
     if (!formData.parentName || !formData.reason || !formData.resolution) {
@@ -894,7 +880,7 @@ export default function ParentAttentionSystem() {
               <option value="">(Sin cambio)</option>
               {deptOptions.map((d) => (
                 <option key={d} value={d}>
-                  {d}
+                  {d} {/* keep department label */}
                 </option>
               ))}
             </select>
@@ -1865,11 +1851,11 @@ export default function ParentAttentionSystem() {
                       <div className="text-sm text-gray-600 space-y-1">
                         <div>
                           <span className="font-medium">Departamento:</span>{" "}
-                          {labelForEmail(deptEmail, deptNameDisp) || "—"}
+                          {deptEmail ? (labelForEmail(deptEmail, deptNameDisp) || "—") : "—"}
                         </div>
                         <div>
                           <span className="font-medium">Supervisor:</span>{" "}
-                          {labelForEmail(supEmail, supName) || "—"}
+                          {supEmail ? (labelForEmail(supEmail, supName) || "—") : "—"}
                         </div>
                       </div>
                     )}

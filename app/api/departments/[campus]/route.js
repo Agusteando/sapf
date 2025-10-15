@@ -30,18 +30,36 @@ export async function GET(request, context = { params: {} }) {
       console.log("[api/departments][GET] injected fallback department 'Enfermería' for campus:", campus);
     }
 
-    // Resolve display names for all present emails
+    // Resolve display names for all present emails (service account + cache)
     const emails = [];
     for (const r of list) {
       if (r.email) emails.push(String(r.email).toLowerCase());
       if (r.supervisor_email) emails.push(String(r.supervisor_email).toLowerCase());
     }
     const namesMap = await getDisplayNames(emails);
-    const enriched = list.map((r) => ({
-      ...r,
-      email_display_name: r.email ? (namesMap[String(r.email).toLowerCase()] || "") : "",
-      supervisor_display_name: r.supervisor_email ? (namesMap[String(r.supervisor_email).toLowerCase()] || "") : "",
-    }));
+
+    // Combine to a user-friendly label "Full Name <email>" when available
+    function combinedLabel(email, fallbackName = "") {
+      const e = String(email || "").trim();
+      const key = e.toLowerCase();
+      const name = String(namesMap[key] || fallbackName || "").trim();
+      if (e && name) return `${name} <${e}>`;
+      return e; // if no name, at least return email
+    }
+
+    const enriched = list.map((r) => {
+      const email = r.email ? String(r.email).trim() : "";
+      const sup = r.supervisor_email ? String(r.supervisor_email).trim() : "";
+      const edn = namesMap[email.toLowerCase()] || "";
+      const sdn = namesMap[sup.toLowerCase()] || "";
+      return {
+        ...r,
+        email_display_name: edn, // Directory name (if available)
+        supervisor_display_name: sdn, // Directory name (if available)
+        email_combined_label: combinedLabel(email, edn || r.email_display_name || ""),
+        supervisor_combined_label: combinedLabel(sup, sdn || r.supervisor_display_name || ""),
+      };
+    });
 
     console.log("[api/departments][GET] rows enriched:", enriched?.length ?? 0);
     return NextResponse.json(enriched);
