@@ -39,13 +39,6 @@ function TopActivityBar({ active }) {
   );
 }
 
-function displayLabel(email, name) {
-  const e = String(email || "");
-  const n = String(name || "").trim();
-  if (n) return `${n} <${e}>`;
-  return e;
-}
-
 // Email chips component with name-aware suggestions
 function EmailChips({ value, onChange, suggestions = [] }) {
   const [input, setInput] = useState("");
@@ -270,6 +263,9 @@ export default function ParentAttentionSystem() {
     ccEmails: []
   });
 
+  // Precomputed institutional display names
+  const [institutionalNames, setInstitutionalNames] = useState({});
+
   // Dashboard state
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
   const [dashSchoolYear, setDashSchoolYear] = useState("");
@@ -304,6 +300,37 @@ export default function ParentAttentionSystem() {
     "Artes y Deportes",
     "Enfermería"
   ];
+
+  // Helper to present email with Directory displayName
+  const labelForEmail = useCallback((email, fallbackName = "") => {
+    const e = String(email || "");
+    const lower = e.toLowerCase();
+    const name = String(institutionalNames[lower] || fallbackName || "").trim();
+    if (e && name) return `${name} <${e}>`;
+    return e || "";
+  }, [institutionalNames]);
+
+  // Load precomputed names once
+  useEffect(() => {
+    let mounted = true;
+    trackAsync(async () => {
+      try {
+        const res = await fetch("/api/directory/names", { cache: "no-store" });
+        if (!mounted) return;
+        if (!res.ok) {
+          console.warn("[app/page] failed to fetch precomputed names", res.status);
+          return;
+        }
+        const data = await res.json();
+        if (data?.ok && data?.names && typeof data.names === "object") {
+          setInstitutionalNames(data.names);
+        }
+      } catch (e) {
+        console.warn("[app/page] error fetching precomputed names", e?.message || e);
+      }
+    });
+    return () => { mounted = false; };
+  }, [trackAsync]);
 
   // Load school years
   useEffect(() => {
@@ -459,13 +486,19 @@ export default function ParentAttentionSystem() {
     });
   };
 
-  // Suggestions compiled from departments (email and supervisor), enriched with names from departments API
+  // Suggestions compiled from departments (email and supervisor), enriched with precomputed names
   const internalEmailSuggestions = useMemo(() => {
     const list = [];
     for (const [_, arr] of Object.entries(departments || {})) {
       for (const r of arr) {
-        if (r?.email) list.push({ email: r.email, name: r.email_display_name || "" });
-        if (r?.supervisor_email) list.push({ email: r.supervisor_email, name: r.supervisor_display_name || "" });
+        if (r?.email) {
+          const e = String(r.email).toLowerCase();
+          list.push({ email: r.email, name: institutionalNames[e] || r.email_display_name || "" });
+        }
+        if (r?.supervisor_email) {
+          const e2 = String(r.supervisor_email).toLowerCase();
+          list.push({ email: r.supervisor_email, name: institutionalNames[e2] || r.supervisor_display_name || "" });
+        }
       }
     }
     // de-dup by email
@@ -475,7 +508,7 @@ export default function ParentAttentionSystem() {
       if (!map.has(key)) map.set(key, item);
     }
     return Array.from(map.values());
-  }, [departments]);
+  }, [departments, institutionalNames]);
 
   // Compute default month for a given school year: current month if it belongs to that cycle; otherwise August (start)
   const defaultMonthForSchoolYear = useCallback((sy) => {
@@ -660,7 +693,7 @@ export default function ParentAttentionSystem() {
 
   function holderDisplayFor(deptName) {
     const entry = departments?.[deptName]?.[0] || {};
-    const name =
+    const maybeName =
       entry.responsable_name ||
       entry.display_name ||
       entry.in_charge_name ||
@@ -673,8 +706,7 @@ export default function ParentAttentionSystem() {
       entry.email_display_name ||
       "";
     const email = entry.email || "";
-    const label = displayLabel(email, name);
-    return label;
+    return labelForEmail(email, maybeName);
   }
 
   // Restore missing submitTicket function
@@ -870,19 +902,25 @@ export default function ParentAttentionSystem() {
         </div>
 
         <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          Un correo será enviado a: <strong>{displayLabel(deptEmail, deptName) || "—"}</strong>
-          {supEmail ? <> y copia a su supervisor: <strong>{displayLabel(supEmail, supName)}</strong></> : <> (sin supervisor configurado)</>}
+          Un correo será enviado a: <strong>{labelForEmail(deptEmail, deptName) || "—"}</strong>
+          {supEmail ? <> y copia a su supervisor: <strong>{labelForEmail(supEmail, supName)}</strong></> : <> (sin supervisor configurado)</>}
           <div className="mt-2">
             Correos adicionales (internos):
             <EmailChips value={ccEmails} onChange={setCcEmails} suggestions={
-              Object.values(depts || {}).flat().map((r) => ({
-                email: r.email,
-                name: r.email_display_name || ""
-              })).concat(
-                Object.values(depts || {}).flat().map((r) => ({
-                  email: r.supervisor_email,
-                  name: r.supervisor_display_name || ""
-                }))
+              Object.values(depts || {}).flat().map((r) => {
+                const e = String(r.email || "").toLowerCase();
+                return ({
+                  email: r.email,
+                  name: institutionalNames[e] || r.email_display_name || ""
+                });
+              }).concat(
+                Object.values(depts || {}).flat().map((r) => {
+                  const e2 = String(r.supervisor_email || "").toLowerCase();
+                  return ({
+                    email: r.supervisor_email,
+                    name: institutionalNames[e2] || r.supervisor_display_name || ""
+                  });
+                })
               ).filter((x) => x.email)
             } />
           </div>
@@ -1273,10 +1311,11 @@ export default function ParentAttentionSystem() {
               <option value="">Sin canalización</option>
               {Object.keys(departments).map((d) => {
                 const entry = departments[d]?.[0] || {};
-                const label = displayLabel(entry.email || "", entry.email_display_name || "") || d;
+                const email = entry.email || "";
+                const label = labelForEmail(email, entry.email_display_name || "") || d;
                 return (
                   <option key={d} value={d}>
-                    {d} {entry.email ? `— ${label}` : ""}
+                    {d} {email ? `— ${label}` : ""}
                   </option>
                 );
               })}
@@ -1299,8 +1338,8 @@ export default function ParentAttentionSystem() {
             <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
               {formData.targetDepartment ? (
                 <>
-                  Un correo será enviado a: <strong>{displayLabel(canalizadoEmail, canalizadoName) || "—"}</strong>
-                  {canalizadoSup ? <> y copia al supervisor: <strong>{displayLabel(canalizadoSup, canalizadoSupName)}</strong></> : <> (sin supervisor configurado)</>}
+                  Un correo será enviado a: <strong>{labelForEmail(canalizadoEmail, canalizadoName) || "—"}</strong>
+                  {canalizadoSup ? <> y copia al supervisor: <strong>{labelForEmail(canalizadoSup, canalizadoSupName)}</strong></> : <> (sin supervisor configurado)</>}
                   <div className="mt-2">
                     Correos adicionales (internos):
                     <EmailChips
@@ -1535,7 +1574,7 @@ export default function ParentAttentionSystem() {
               className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
               value={actions}
               onChange={(e) => setActions(e.target.value)}
-              placeholder="Indicaciones para seguimiento en casa, recomendaciones de atención médica, etc."
+              placeholder="Indicaciones para seguimiento en casa, etc."
             />
           </div>
         </div>
@@ -1826,11 +1865,11 @@ export default function ParentAttentionSystem() {
                       <div className="text-sm text-gray-600 space-y-1">
                         <div>
                           <span className="font-medium">Departamento:</span>{" "}
-                          {displayLabel(deptEmail, deptNameDisp) || "—"}
+                          {labelForEmail(deptEmail, deptNameDisp) || "—"}
                         </div>
                         <div>
                           <span className="font-medium">Supervisor:</span>{" "}
-                          {displayLabel(supEmail, supName) || "—"}
+                          {labelForEmail(supEmail, supName) || "—"}
                         </div>
                       </div>
                     )}
