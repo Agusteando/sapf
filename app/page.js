@@ -677,6 +677,71 @@ export default function ParentAttentionSystem() {
     return label;
   }
 
+  // Restore missing submitTicket function
+  const submitTicket = async () => {
+    if (!formData.parentName || !formData.reason || !formData.resolution) {
+      alert("Por favor complete todos los campos requeridos");
+      return;
+    }
+
+    await trackAsync(async () => {
+      try {
+        const departmentEmail = departments[formData.selectedDepartment]?.[0]?.email || "";
+
+        const response = await fetch("/api/tickets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({
+            campus: selectedCampus,
+            contact_method: formData.contactMethod,
+            is_complaint: formData.isComplaint ? 1 : 0,
+            parent_name: formData.parentName,
+            student_name: formData.studentName,
+            phone_number: formData.phoneNumber,
+            parent_email: formData.parentEmail,
+            reason: formData.reason,
+            resolution: formData.resolution,
+            appointment_date: formData.noAppointment ? null : formData.appointmentDate,
+            target_department: formData.targetDepartment,
+            department_email: departmentEmail,
+            created_by: "Current User",
+            original_department: formData.selectedDepartment || "General",
+            status: formData.status,
+            cc_emails: formData.ccEmails
+          }),
+        });
+
+        const result = await response.json();
+        if (response.ok && result.success) {
+          alert(`Ficha generada exitosamente. Folio: ${result.folioNumber}`);
+          setFormData({
+            contactMethod: "email",
+            isComplaint: false,
+            parentName: "",
+            studentName: "",
+            phoneNumber: "",
+            parentEmail: "",
+            reason: "",
+            resolution: "",
+            appointmentDate: new Date().toISOString().slice(0, 16),
+            noAppointment: false,
+            targetDepartment: "",
+            status: "0",
+            selectedDepartment: Object.keys(departments)[0] || "Enfermería",
+            existingOpenTicketId: null,
+            studentPhotoUrl: "",
+            ccEmails: []
+          });
+        } else {
+          alert(result?.error || "No se pudo generar la ficha");
+        }
+      } catch (error) {
+        console.error("Error submitting ticket:", error);
+        alert("Error al generar la ficha");
+      }
+    });
+  };
+
   const FollowupForm = ({ ticket, depts, onSaved }) => {
     const [resolution, setResolution] = useState("");
     const [status, setStatus] = useState(ticket.status || "0");
@@ -935,8 +1000,8 @@ export default function ParentAttentionSystem() {
 
               {ticket.followups && ticket.followups.length > 0 && (
                 <div className="mt-4 pt-4 border-t border-gray-200">
-                  <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                    <ChevronRight className="w-4 h-4" />
+                  <h4 className="font-semibold text-gray-700 mb-3">
+                    <ChevronRight className="inline w-4 h-4 mr-1" />
                     Seguimientos ({ticket.followups.length})
                   </h4>
                   <div className="space-y-3">
