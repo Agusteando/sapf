@@ -495,12 +495,12 @@ export default function ParentAttentionSystem() {
       for (const r of arr) {
         if (r?.email) {
           const e = String(r.email).toLowerCase();
-          const name = institutionalNames[e] || r.email_display_name || "";
+          const name = r.email_display_name || institutionalNames[e] || "";
           list.push({ email: r.email, name });
         }
         if (r?.supervisor_email) {
           const e2 = String(r.supervisor_email).toLowerCase();
-          const name2 = institutionalNames[e2] || r.supervisor_display_name || "";
+          const name2 = r.supervisor_display_name || institutionalNames[e2] || "";
           list.push({ email: r.supervisor_email, name: name2 });
         }
       }
@@ -776,6 +776,9 @@ export default function ParentAttentionSystem() {
     const supEmail = deptRec.supervisor_email || "";
     const supName = deptRec.supervisor_display_name || "";
 
+    const deptCombined = deptRec.email_combined_label || labelForEmail(deptEmail, deptName) || "";
+    const supCombined = deptRec.supervisor_combined_label || labelForEmail(supEmail, supName) || "";
+
     async function submitFollowup() {
       setError("");
       if (!resolution || resolution.trim().length === 0) {
@@ -880,7 +883,7 @@ export default function ParentAttentionSystem() {
               <option value="">(Sin cambio)</option>
               {deptOptions.map((d) => (
                 <option key={d} value={d}>
-                  {d} {/* keep department label */}
+                  {d}
                 </option>
               ))}
             </select>
@@ -888,8 +891,8 @@ export default function ParentAttentionSystem() {
         </div>
 
         <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          Un correo será enviado a: <strong>{labelForEmail(deptEmail, deptName) || "—"}</strong>
-          {supEmail ? <> y copia a su supervisor: <strong>{labelForEmail(supEmail, supName)}</strong></> : <> (sin supervisor configurado)</>}
+          Un correo será enviado a: <strong>{deptCombined || "—"}</strong>
+          {supEmail ? <> y copia a su supervisor: <strong>{supCombined}</strong></> : <> (sin supervisor configurado)</>}
           <div className="mt-2">
             Correos adicionales (internos):
             <EmailChips value={ccEmails} onChange={setCcEmails} suggestions={
@@ -897,14 +900,14 @@ export default function ParentAttentionSystem() {
                 const e = String(r.email || "").toLowerCase();
                 return ({
                   email: r.email,
-                  name: institutionalNames[e] || r.email_display_name || ""
+                  name: r.email_display_name || (institutionalNames[e] || "")
                 });
               }).concat(
                 Object.values(depts || {}).flat().map((r) => {
                   const e2 = String(r.supervisor_email || "").toLowerCase();
                   return ({
                     email: r.supervisor_email,
-                    name: institutionalNames[e2] || r.supervisor_display_name || ""
+                    name: r.supervisor_display_name || (institutionalNames[e2] || "")
                   });
                 })
               ).filter((x) => x.email)
@@ -1105,6 +1108,8 @@ export default function ParentAttentionSystem() {
     const canalizadoName = canalizadoRec.email_display_name || "";
     const canalizadoSup = canalizadoRec.supervisor_email || "";
     const canalizadoSupName = canalizadoRec.supervisor_display_name || "";
+    const canalizadoCombined = canalizadoRec.email_combined_label || labelForEmail(canalizadoEmail, canalizadoName) || "";
+    const canalizadoSupCombined = canalizadoRec.supervisor_combined_label || labelForEmail(canalizadoSup, canalizadoSupName) || "";
 
     return (
       <div className="bg-white p-6 rounded-lg shadow-lg">
@@ -1298,10 +1303,10 @@ export default function ParentAttentionSystem() {
               {Object.keys(departments).map((d) => {
                 const entry = departments[d]?.[0] || {};
                 const email = entry.email || "";
-                const label = labelForEmail(email, entry.email_display_name || "") || d;
+                const combined = entry.email_combined_label || labelForEmail(email, entry.email_display_name || "");
                 return (
                   <option key={d} value={d}>
-                    {d} {email ? `— ${label}` : ""}
+                    {d} {combined ? `— ${combined}` : ""}
                   </option>
                 );
               })}
@@ -1324,8 +1329,8 @@ export default function ParentAttentionSystem() {
             <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
               {formData.targetDepartment ? (
                 <>
-                  Un correo será enviado a: <strong>{labelForEmail(canalizadoEmail, canalizadoName) || "—"}</strong>
-                  {canalizadoSup ? <> y copia al supervisor: <strong>{labelForEmail(canalizadoSup, canalizadoSupName)}</strong></> : <> (sin supervisor configurado)</>}
+                  Un correo será enviado a: <strong>{canalizadoCombined || "—"}</strong>
+                  {canalizadoSup ? <> y copia al supervisor: <strong>{canalizadoSupCombined}</strong></> : <> (sin supervisor configurado)</>}
                   <div className="mt-2">
                     Correos adicionales (internos):
                     <EmailChips
@@ -1782,6 +1787,8 @@ export default function ParentAttentionSystem() {
             const deptNameDisp = rec.email_display_name || "";
             const supEmail = rec.supervisor_email || "";
             const supName = rec.supervisor_display_name || "";
+            const deptCombined = rec.email_combined_label || labelForEmail(deptEmail, deptNameDisp) || "";
+            const supCombined = rec.supervisor_combined_label || labelForEmail(supEmail, supName) || "";
             return (
               <div
                 key={deptName}
@@ -1851,11 +1858,11 @@ export default function ParentAttentionSystem() {
                       <div className="text-sm text-gray-600 space-y-1">
                         <div>
                           <span className="font-medium">Departamento:</span>{" "}
-                          {deptEmail ? (labelForEmail(deptEmail, deptNameDisp) || "—") : "—"}
+                          {deptEmail ? (deptCombined || "—") : "—"}
                         </div>
                         <div>
                           <span className="font-medium">Supervisor:</span>{" "}
-                          {supEmail ? (labelForEmail(supEmail, supName) || "—") : "—"}
+                          {supEmail ? (supCombined || "—") : "—"}
                         </div>
                       </div>
                     )}
@@ -1876,6 +1883,28 @@ export default function ParentAttentionSystem() {
       </div>
     );
   };
+
+  async function updateDepartment(department_name, email, supervisor_email) {
+    await trackAsync(async () => {
+      try {
+        const res = await fetch(`/api/departments/${selectedCampus}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({ department_name, email, supervisor_email }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          alert(data?.error || "No se pudo guardar el departamento");
+          return;
+        }
+        setEditingDept(null);
+        await fetchDepartments();
+      } catch (e) {
+        console.error("[DepartmentManager] updateDepartment error", e);
+        alert("Error de red al guardar el departamento");
+      }
+    });
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
