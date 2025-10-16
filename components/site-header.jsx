@@ -133,14 +133,10 @@ export default function SiteHeader() {
     <>
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-200">
         <div className="max-w-screen-xl mx-auto px-4">
-          <div className="flex items-center justify-between py-3">
+          <div className="flex items-center justify-between py-4">
             <div className="flex items-center gap-3">
-              <div className="relative w-48 h-12 sm:w-60 sm:h-14">
+              <div className="relative w-56 h-14 sm:w-72 sm:h-20">
                 <Image src="/sapf-h.png" alt="SAPF" fill className="object-contain" priority />
-              </div>
-              <div className="hidden sm:flex items-center gap-2 text-gray-500">
-                <span>•</span>
-                <span className="font-title text-[#004E66]">Sistema de Atención a Padres de Familia</span>
               </div>
             </div>
 
