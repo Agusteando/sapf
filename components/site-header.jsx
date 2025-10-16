@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { Building2, LogOut, MapPin, Settings2, UserCircle2 } from "lucide-react";
 import SearchableSelect from "@/components/searchable-select";
@@ -14,6 +14,7 @@ export default function SiteHeader() {
   const [departments, setDepartments] = useState([]);
   const [selCampus, setSelCampus] = useState("");
   const [selDept, setSelDept] = useState("");
+  const [authed, setAuthed] = useState(null); // null = unknown, true = logged in, false = not logged in
 
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
   const hideOnLogin = pathname.startsWith("/login");
@@ -22,8 +23,14 @@ export default function SiteHeader() {
     setLoading(true);
     try {
       const res = await fetch("/api/profile", { cache: "no-store" });
+      if (res.status === 401) {
+        setAuthed(false);
+        setLoading(false);
+        return;
+      }
       if (!res.ok) throw new Error("profile fetch failed");
       const data = await res.json();
+      setAuthed(true);
       setProfile(data);
       setCampusOptions(Array.isArray(data.campusOptions) ? data.campusOptions : []);
       const preferredCampus = data?.preference?.campus || data?.detected?.campus || "";
@@ -42,6 +49,7 @@ export default function SiteHeader() {
       window.dispatchEvent(new CustomEvent("sapf:profile-updated", { detail: { campus: preferredCampus, department_name: preferredDept } }));
     } catch (e) {
       console.warn("[SiteHeader] loadProfile error", e?.message || e);
+      setAuthed(false);
     } finally {
       setLoading(false);
     }
@@ -85,9 +93,7 @@ export default function SiteHeader() {
         alert(data?.error || "No se pudo guardar la preferencia");
         return;
       }
-      // Persist in localStorage for UX
       localStorage.setItem("sapf_pref", JSON.stringify({ campus: selCampus, department_name: selDept }));
-      // Broadcast to app
       window.dispatchEvent(new CustomEvent("sapf:profile-updated", { detail: { campus: selCampus, department_name: selDept } }));
       setOpenPanel(false);
     } catch (e) {
@@ -105,7 +111,8 @@ export default function SiteHeader() {
     window.location.assign("/login");
   }
 
-  if (hideOnLogin) return null;
+  // Hide header on login page or when not authenticated (unknown or false).
+  if (hideOnLogin || authed !== true) return null;
 
   const userName = profile?.user?.name || "";
   const userEmail = profile?.user?.email || "";
@@ -120,7 +127,7 @@ export default function SiteHeader() {
       <div className="max-w-screen-xl mx-auto px-4">
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
-            <div className="relative w-40 h-10 sm:w-48 sm:h-12">
+            <div className="relative w-48 h-12 sm:w-60 sm:h-14">
               <Image src="/sapf-h.png" alt="SAPF" fill className="object-contain" priority />
             </div>
             <div className="hidden sm:flex items-center gap-2 text-gray-500">
@@ -136,7 +143,7 @@ export default function SiteHeader() {
               </div>
               {userEmail && <div className="text-xs text-gray-500">{userEmail}</div>}
             </div>
-            <div className="w-9 h-9 rounded-full bg-[#E6F3F6] overflow-hidden ring-2 ring-[#018B9C]">
+            <div className="w-10 h-10 rounded-full bg-[#E6F3F6] overflow-hidden ring-2 ring-[#018B9C]">
               {userPic ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={userPic} alt={userName || "Usuario"} className="w-full h-full object-cover" />

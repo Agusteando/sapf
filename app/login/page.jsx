@@ -51,7 +51,7 @@ export default function LoginPage() {
           text: "signin_with",
           size: "large",
           logo_alignment: "left",
-          width: 360,
+          width: 380,
           locale: "es",
         });
       }
@@ -87,7 +87,7 @@ export default function LoginPage() {
           <div className="p-8 sm:p-12">
             {/* Logos */}
             <div className="flex flex-col items-center gap-4">
-              <div className="relative w-64 h-16 sm:w-80 sm:h-20">
+              <div className="relative w-80 h-20 sm:w-96 sm:h-24">
                 <Image
                   src="/sapf-h.png"
                   alt="SAPF"
@@ -119,7 +119,7 @@ export default function LoginPage() {
 
             {/* Footer note with vertical logo */}
             <div className="mt-10 flex items-center justify-center gap-3 text-xs text-gray-600">
-              <div className="relative w-8 h-8">
+              <div className="relative w-10 h-10">
                 <Image
                   src="/sapf.png"
                   alt="Logo SAPF"

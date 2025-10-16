@@ -103,7 +103,7 @@ export default function CompareCampusesPage() {
         <div className="max-w-screen-xl mx-auto px-4">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center gap-3">
-              <div className="relative w-32 h-8">
+              <div className="relative w-40 h-10">
                 <Image src="/sapf-h.png" alt="SAPF" fill className="object-contain" />
               </div>
               <span className="hidden sm:block text-white/80">Comparativo por Plantel</span>
