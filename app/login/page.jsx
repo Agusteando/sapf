@@ -4,6 +4,8 @@
 import { useEffect, useRef } from "react";
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
+import ToastViewport from "@/components/toast-viewport";
+import { toastError } from "@/lib/notify";
 
 const GSI_CLIENT_ID = process.env.NEXT_PUBLIC_GSI_CLIENT_ID;
 
@@ -13,7 +15,7 @@ export default function LoginPage() {
   useEffect(() => {
     function handleCredentialResponse(response) {
       if (!response || !response.credential) {
-        alert("No se recibió credencial de Google, intenta de nuevo.");
+        toastError("No se recibió credencial de Google, intenta de nuevo.");
         return;
       }
       fetch("/api/auth/login", {
@@ -24,13 +26,13 @@ export default function LoginPage() {
         .then(async (res) => {
           const data = await res.json();
           if (!res.ok) {
-            alert(data.error || "Acceso denegado");
+            toastError(data.error || "Acceso denegado");
             return;
           }
           window.location.replace("/");
         })
         .catch(() => {
-          alert("Error de red");
+          toastError("Error de red");
         });
     }
 
@@ -76,6 +78,8 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
+      <ToastViewport />
+
       {/* Brand background */}
       <div className="absolute inset-0 bg-brand-gradient opacity-90" />
       <div className="absolute -top-32 -right-24 w-[60vw] h-[60vw] rounded-full bg-sun-gradient blur-3xl opacity-40 pointer-events-none" />

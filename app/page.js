@@ -23,6 +23,7 @@ import NursingReport from "@/components/nursing-report";
 import TicketCard from "@/components/ticket-card";
 import FollowupForm from "@/components/followup-form";
 import { departmentOptions, combinedEmailLabel } from "@/lib/ui";
+import { toastError, toastSuccess, toastWarning, toastInfo } from "@/lib/notify";
 
 export default function ParentAttentionSystem() {
   const [currentView, setCurrentView] = useState("dashboard");
@@ -510,20 +511,23 @@ export default function ParentAttentionSystem() {
 
   const exportToExcel = () => {
     if (!selectedCampus) {
-      alert("Selecciona un plantel para exportar.");
+      toastWarning("Selecciona un plantel para exportar.");
       return;
     }
     const base = `/api/export-excel?campus=${encodeURIComponent(selectedCampus)}&status=`;
     const r = computeMonthRange(dashSelectedMonth);
     if (r) {
       window.open(`${base}&startDate=${encodeURIComponent(r.start)}&endDate=${encodeURIComponent(r.end)}`, "_blank");
+      toastInfo("Exportando datos del mes seleccionado…");
     } else if (dashSchoolYear) {
       const [startYear, endYear] = dashSchoolYear.split("-").map(Number);
       const start = `${startYear}-08-01 00:00:00`;
       const end = `${endYear}-08-01 00:00:00`;
       window.open(`${base}&startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`, "_blank");
+      toastInfo("Exportando datos del ciclo escolar seleccionado…");
     } else {
       window.open(base, "_blank");
+      toastInfo("Exportando datos…");
     }
   };
 
@@ -531,11 +535,11 @@ export default function ParentAttentionSystem() {
 
   const submitTicket = async () => {
     if (!canSubmitTicket) {
-      alert("Configura tu Plantel y Departamento en la barra superior antes de generar una ficha.");
+      toastWarning("Configura tu Plantel y Departamento en la barra superior antes de generar una ficha.");
       return;
     }
     if (!formData.parentName || !formData.reason || !formData.resolution) {
-      alert("Por favor complete todos los campos requeridos");
+      toastWarning("Por favor complete todos los campos requeridos");
       return;
     }
 
@@ -568,7 +572,8 @@ export default function ParentAttentionSystem() {
 
         const result = await response.json();
         if (response.ok && result.success) {
-          alert(`Ficha generada exitosamente. Folio: ${result.folioNumber}`);
+          const folio = result.folioNumber || String(result.ticketId || "").padStart(5, "0");
+          toastSuccess(`Ficha generada exitosamente. Folio: ${folio}`);
           setFormData({
             contactMethod: "email",
             isComplaint: false,
@@ -588,11 +593,11 @@ export default function ParentAttentionSystem() {
             ccEmails: []
           });
         } else {
-          alert(result?.error || "No se pudo generar la ficha");
+          toastError(result?.error || "No se pudo generar la ficha");
         }
       } catch (error) {
         console.error("Error submitting ticket:", error);
-        alert("Error al generar la ficha");
+        toastError("Error al generar la ficha");
       }
     });
   };
@@ -653,6 +658,7 @@ export default function ParentAttentionSystem() {
             }
           } catch { /* ignore */ }
         });
+        toastSuccess("Seguimiento guardado.");
       } catch (e) {
         console.error("[Followup] submit error", e);
         setFollowError("Error de red al guardar el seguimiento.");
@@ -692,14 +698,15 @@ export default function ParentAttentionSystem() {
         });
         const data = await res.json();
         if (!res.ok || !data?.success) {
-          alert(data?.error || "No se pudo guardar el departamento");
+          toastError(data?.error || "No se pudo guardar el departamento");
           return;
         }
         setEditingDept(null);
         await fetchDepartments();
+        toastSuccess("Departamento actualizado.");
       } catch (e) {
         console.error("[DepartmentManager] updateDepartment error", e);
-        alert("Error de red al guardar el departamento");
+        toastError("Error de red al guardar el departamento");
       }
     });
   }
@@ -710,11 +717,11 @@ export default function ParentAttentionSystem() {
 
   async function onSubmitNursingReport({ parentName, parentEmail, studentName, report, actions }) {
     if (!selectedCampus) {
-      alert("Configura tu Plantel en la barra superior.");
+      toastWarning("Configura tu Plantel en la barra superior.");
       return;
     }
     if (!parentName || !parentEmail || !studentName || !report) {
-      alert("Completa los campos requeridos (Padre/Madre, Correo, Alumno, Reporte).");
+      toastWarning("Completa los campos requeridos (Padre/Madre, Correo, Alumno, Reporte).");
       return;
     }
     setActiveOps((n) => n + 1);
@@ -743,7 +750,7 @@ export default function ParentAttentionSystem() {
       const created = await createRes.json();
 
       if (!createRes.ok || !created?.success) {
-        alert(created?.error || "No se pudo registrar el reporte.");
+        toastError(created?.error || "No se pudo registrar el reporte.");
         return;
       }
 
@@ -758,10 +765,10 @@ export default function ParentAttentionSystem() {
           <p style="margin: 0 0 10px 0;">Padre/Madre/Tutor: <strong>${parentName}</strong></p>
           <hr style="border:0;border-top:1px solid #e5e7eb;margin:16px 0"/>
           <h3 style="margin:0 0 8px 0;">Observaciones</h3>
-          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">${report.replace(/\n/g, "<br/>")}</div>
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">${(report || "").replace(/\n/g, "<br/>")}</div>
           ${actions ? `
             <h3 style="margin:16px 0 8px 0;">Acciones / Recomendaciones</h3>
-            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">${actions.replace(/\n/g, "<br/>")}</div>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">${(actions || "").replace(/\n/g, "<br/>")}</div>
           ` : ""}
           <p style="margin-top:16px;color:#6b7280;font-size:12px;">Este mensaje ha sido enviado por Enfermería del plantel. No responda a este correo.</p>
         </div>
@@ -781,13 +788,13 @@ export default function ParentAttentionSystem() {
       if (!emailRes.ok) {
         const t = await emailRes.text();
         console.warn("[Nursing] email send failed", t.slice(0, 200));
-        alert("Reporte registrado, pero ocurrió un problema al enviar el correo.");
+        toastWarning("Reporte registrado, pero ocurrió un problema al enviar el correo.");
       } else {
-        alert("Reporte de Enfermería enviado a padres.");
+        toastSuccess("Reporte de Enfermería enviado a padres.");
       }
     } catch (e) {
       console.error("[Nursing] submit error", e);
-      alert("Error de red al enviar el reporte.");
+      toastError("Error de red al enviar el reporte.");
     } finally {
       setActiveOps((n) => Math.max(0, n - 1));
     }
