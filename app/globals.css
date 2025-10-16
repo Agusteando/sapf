@@ -3,6 +3,144 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+/* Brand palette - institutional */
+:root {
+  --brand-leaf: #6DA544;       /* Leaf Green */
+  --brand-forest: #356635;     /* Forest Green */
+  --brand-skyteal: #018B9C;    /* Sky Teal */
+  --brand-deepteal: #004E66;   /* Deep Teal */
+  --brand-sun: #F7931E;        /* Sun Orange */
+  --brand-coral: #E94E1B;      /* Coral Red */
+  --brand-peach: #F8B195;      /* Soft Peach */
+  --brand-beige: #E8E3D3;      /* Warm Beige */
+  --brand-white: #FFFFFF;      /* Pure White */
+  --brand-coolgray: #4C4C4C;   /* Cool Gray */
+
+  --brand-bg: #EFF1EF;         /* Subtle app background */
+  --brand-ink: #3A2E2D;        /* Primary text */
+}
+
+/* Base typography: Montserrat (semi-bold) as the global font */
+html, body {
+  font-family: var(--font-sans-brand), ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  font-weight: 600;
+  color: var(--brand-ink);
+  background-color: var(--brand-bg);
+}
+
+/* Titles use Fredoka */
+.font-title, .heading-brand {
+  font-family: var(--font-title), ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Brand helpers */
+.text-brand { color: var(--brand-deepteal); }
+.text-brand-ink { color: var(--brand-ink); }
+.bg-brand { background-color: var(--brand-leaf); }
+.bg-brand-strong { background-color: var(--brand-deepteal); }
+.bg-brand-accent { background-color: var(--brand-sun); }
+.bg-brand-soft { background-color: var(--brand-beige); }
+.bg-brand-bg { background-color: var(--brand-bg); }
+.border-brand { border-color: var(--brand-leaf); }
+.border-brand-strong { border-color: var(--brand-deepteal); }
+.border-brand-accent { border-color: var(--brand-sun); }
+
+/* Button primitives */
+.btn {
+  @apply inline-flex items-center gap-2 rounded-lg px-4 py-2 transition-colors;
+}
+.btn-brand {
+  color: #fff;
+  background-color: var(--brand-leaf);
+}
+.btn-brand:hover {
+  background-color: var(--brand-forest);
+}
+.btn-accent {
+  color: #fff;
+  background-color: var(--brand-sun);
+}
+.btn-accent:hover {
+  background-color: #e88510;
+}
+.btn-strong {
+  color: #fff;
+  background-color: var(--brand-deepteal);
+}
+.btn-strong:hover {
+  background-color: #003d4d;
+}
+
+/* Card basics */
+.card {
+  @apply bg-white rounded-lg shadow;
+}
+
+/* Input focus ring in Sky Teal */
+.input, select, textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="datetime-local"] {
+  @apply border border-gray-300 rounded-lg focus:outline-none;
+}
+.input:focus, select:focus, textarea:focus,
+input[type="text"]:focus, input[type="email"]:focus, input[type="tel"]:focus, input[type="datetime-local"]:focus {
+  box-shadow: 0 0 0 3px rgb(1 139 156 / 25%);
+  border-color: var(--brand-skyteal);
+}
+
+/* Soft badges */
+.badge {
+  @apply inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs;
+}
+.badge-green {
+  color: var(--brand-forest);
+  background-color: #eaf3e6;
+  border: 1px solid #d9e7d2;
+}
+.badge-orange {
+  color: #7a4a05;
+  background-color: #fff3e6;
+  border: 1px solid #ffe3c4;
+}
+.badge-teal {
+  color: var(--brand-deepteal);
+  background-color: #e6f3f6;
+  border: 1px solid #cde6eb;
+}
+.badge-coral {
+  color: #7a200f;
+  background-color: #ffe9e3;
+  border: 1px solid #ffd3c8;
+}
+
+/* Minimal scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c8d1cf transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #c8d1cf;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Subtle hover container */
+.hover-soft:hover {
+  background-color: rgba(232, 227, 211, 0.4);
+}
+
+/* Utility for brand gradients */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, var(--brand-deepteal), var(--brand-skyteal));
+}
+.bg-sun-gradient {
+  background-image: linear-gradient(135deg, var(--brand-sun), #ffc56e);
 }

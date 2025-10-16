@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildNormalizedCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause, buildOriginExpr, buildPriorityExpr } from "@/lib/schema";
 import ExcelJS from "exceljs";
 
 export async function GET(request, context = { params: {} }) {
@@ -26,6 +26,9 @@ export async function GET(request, context = { params: {} }) {
       ? await buildNormalizedCampusClause(pool, "f", campus)
       : { clause: "1=1", params: [] };
 
+    const originExpr = await buildOriginExpr(pool, "f");
+    const priorityExpr = await buildPriorityExpr(pool, "f");
+
     let query = `
       SELECT 
         LPAD(f.id, 5, "0") as Folio,
@@ -35,6 +38,8 @@ export async function GET(request, context = { params: {} }) {
         f.parent_name as Padre,
         f.student_name as Alumno,
         f.contact_method as Tipo_Contacto,
+        ${originExpr} AS Origen,
+        CASE WHEN (${priorityExpr}) >= 2 THEN "Alta" ELSE "Normal" END AS Prioridad,
         f.reason as Motivo,
         f.resolution as Resolucion,
         f.target_department as Canalizado_a,
@@ -60,7 +65,7 @@ export async function GET(request, context = { params: {} }) {
       qParams.push(endDate);
     }
 
-    query += " ORDER BY f.fecha DESC";
+    query += " ORDER BY Prioridad DESC, f.fecha DESC";
 
     console.log("[api/export-excel] SQL:", query.replace(/\s+/g, " ").trim());
     console.log("[api/export-excel] params:", qParams);

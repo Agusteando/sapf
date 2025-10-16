@@ -1,0 +1,91 @@
+
+<div ng-controller="sapf" ng-init="init()">
+  <div class="container">
+    <div class="p-3">
+      <h2>Contacto con el plantel</h2>
+      <p class="text-muted">Comparte el motivo y tus datos de contacto. Un equipo del plantel dará seguimiento.</p>
+    </div>
+
+    <form ng-submit="submit()">
+      <!-- Matricula -->
+      <div class="mb-3">
+        <label class="form-label">Matrícula</label>
+        <input type="text" class="form-control" ng-model="data.matricula" ng-change="state.fetched=false" placeholder="Ej. PM1234" required>
+        <div class="mt-2">
+          <button type="button" class="btn btn-outline-primary btn-sm" ng-click="fetchByMatricula()" ng-disabled="state.loading">
+            {{ state.loading ? "Buscando..." : "Buscar por matrícula" }}
+          </button>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <!-- Campus -->
+        <div class="col-12 col-md-6">
+          <label class="form-label">Plantel (si aplica)</label>
+          <input type="text" class="form-control" ng-model="data.campus" placeholder="Ej. PMB, PMA, PT, SM, ST, CM, CT, DM">
+        </div>
+
+        <!-- Alumno -->
+        <div class="col-12 col-md-6">
+          <label class="form-label">Alumno</label>
+          <input type="text" class="form-control" ng-model="data.student_name" placeholder="Nombre del alumno(a)">
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <!-- Padre/Madre/Tutor -->
+        <div class="col-12 col-md-6">
+          <label class="form-label">Padre/Madre/Tutor</label>
+          <input type="text" class="form-control" ng-model="data.parent_name" placeholder="Tu nombre completo">
+        </div>
+        <!-- Email -->
+        <div class="col-12 col-md-6">
+          <label class="form-label">Correo</label>
+          <input type="email" class="form-control" ng-model="data.parent_email" placeholder="correo@ejemplo.com">
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <!-- Teléfono -->
+        <div class="col-12 col-md-6">
+          <label class="form-label">Teléfono</label>
+          <input type="tel" class="form-control" ng-model="data.phone_number" placeholder="10 dígitos">
+        </div>
+        <!-- Es queja -->
+        <div class="col-12 col-md-6 d-flex align-items-end">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="isComplaint" ng-model="data.is_complaint">
+            <label class="form-check-label" for="isComplaint">
+              Es queja
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Motivo -->
+      <div class="mt-3">
+        <label class="form-label">Motivo</label>
+        <textarea class="form-control" rows="5" ng-model="data.reason" placeholder="Describe tu motivo o solicitud" required></textarea>
+      </div>
+
+      <!-- Messages -->
+      <div class="mt-3" ng-if="state.error">
+        <div class="alert alert-danger" role="alert">
+          {{ state.error }}
+        </div>
+      </div>
+      <div class="mt-3" ng-if="state.success">
+        <div class="alert alert-success" role="alert">
+          {{ state.success }}
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <div class="mt-3">
+        <button type="submit" class="btn btn-primary" ng-disabled="state.submitting">
+          {{ state.submitting ? "Enviando..." : "Enviar solicitud" }}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

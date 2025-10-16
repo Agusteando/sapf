@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { TrendingUp } from "lucide-react";
 
 export default function CompareCampusesPage() {
@@ -98,16 +99,18 @@ export default function CompareCampusesPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <nav className="bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg">
+      <nav className="bg-brand-gradient text-white shadow-lg">
         <div className="max-w-screen-xl mx-auto px-4">
           <div className="flex justify-between items-center py-4">
-            <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
-              <TrendingUp className="w-6 h-6" />
-              Comparativo por Plantel
-            </h1>
+            <div className="flex items-center gap-3">
+              <div className="relative w-32 h-8">
+                <Image src="/sapf-h.png" alt="SAPF" fill className="object-contain" />
+              </div>
+              <span className="hidden sm:block text-white/80">Comparativo por Plantel</span>
+            </div>
             <a
               href="/"
-              className="px-4 py-2 bg-white text-orange-600 rounded-lg hover:bg-orange-50"
+              className="px-4 py-2 bg-white text-[#004E66] rounded-lg hover:bg-[#E8E3D3] hover:text-[#004E66]"
             >
               Volver
             </a>
@@ -121,7 +124,7 @@ export default function CompareCampusesPage() {
             <div className="flex items-center gap-3">
               <label className="font-semibold text-gray-700">Ciclo Escolar:</label>
               <select
-                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#018B9C]"
                 value={schoolYear}
                 onChange={(e) => {
                   setSchoolYear(e.target.value);
@@ -139,7 +142,7 @@ export default function CompareCampusesPage() {
             <div className="flex items-center gap-3">
               <label className="font-semibold text-gray-700">Mes:</label>
               <select
-                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#018B9C]"
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
               >
@@ -156,12 +159,12 @@ export default function CompareCampusesPage() {
 
         {loading ? (
           <div className="text-center py-16">
-            <div className="inline-block animate-spin rounded-full h-16 w-16 border-4 border-orange-500 border-t-transparent"></div>
+            <div className="inline-block animate-spin rounded-full h-16 w-16 border-4 border-[#F7931E] border-t-transparent"></div>
             <p className="mt-4 text-gray-600 font-medium">Cargando comparativo...</p>
           </div>
         ) : rows.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-lg shadow">
-            <p className="text-gray-500 text-lg">Sin datos para el periodo seleccionado.</p>
+            <p className="text-gray-600 text-lg">Sin datos para el periodo seleccionado.</p>
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -182,15 +185,15 @@ export default function CompareCampusesPage() {
                     <span className="font-semibold text-gray-800">{r.campus}</span>
                     <div className="w-full h-3 bg-gray-100 rounded">
                       <div
-                        className="h-3 bg-gradient-to-r from-orange-500 to-orange-600 rounded"
+                        className="h-3 bg-gradient-to-r from-[#6DA544] to-[#018B9C] rounded"
                         style={{ width: `${(Number(r.total || 0) / maxTotal) * 100}%` }}
                       />
                     </div>
                   </div>
                   <div className="md:text-right text-gray-800 font-semibold">{r.total}</div>
-                  <div className="md:text-right text-red-600 font-semibold">{r.abiertos}</div>
-                  <div className="md:text-right text-green-600 font-semibold">{r.cerrados}</div>
-                  <div className="md:text-right text-purple-600 font-semibold">{r.quejas}</div>
+                  <div className="md:text-right text-[#E94E1B] font-semibold">{r.abiertos}</div>
+                  <div className="md:text-right text-[#356635] font-semibold">{r.cerrados}</div>
+                  <div className="md:text-right text-[#004E66] font-semibold">{r.quejas}</div>
                 </div>
               ))}
             </div>

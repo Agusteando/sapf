@@ -1,3 +1,4 @@
+
 // components/searchable-select.jsx
 
 "use client";
@@ -63,7 +64,7 @@ export default function SearchableSelect({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between gap-2 p-3 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+        className="w-full flex items-center justify-between gap-2 p-3 border border-gray-300 rounded-lg bg-white hover:bg-[#E8E3D3]/40 focus:outline-none focus:ring-2 focus:ring-[#018B9C] transition-colors"
       >
         <span className={`truncate ${!selectedOption ? "text-gray-500" : "text-gray-900"}`}>
           {selectedLabel}
@@ -76,7 +77,7 @@ export default function SearchableSelect({
         <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-hidden">
           {/* Search input */}
           <div className="p-2 border-b border-gray-200 sticky top-0 bg-white">
-            <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
+            <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-[#E8E3D3]/30">
               <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
               <input
                 type="text"
@@ -104,15 +105,15 @@ export default function SearchableSelect({
                     key={`${optValue}-${idx}`}
                     type="button"
                     onClick={() => handleSelect(option)}
-                    className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-blue-50 transition-colors ${
-                      isSelected ? "bg-blue-50 text-blue-700" : "text-gray-900"
+                    className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-[#E8E3D3]/40 transition-colors ${
+                      isSelected ? "bg-[#E6F3F6] text-[#004E66]" : "text-gray-900"
                     }`}
                   >
                     <span className="flex-1 text-sm">
                       {renderFn(option)}
                     </span>
                     {isSelected && (
-                      <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                      <Check className="w-4 h-4 text-[#018B9C] flex-shrink-0" />
                     )}
                   </button>
                 );

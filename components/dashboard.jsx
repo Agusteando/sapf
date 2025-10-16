@@ -29,7 +29,7 @@ export default function Dashboard({
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-extrabold text-center text-orange-600 mb-6 tracking-tight">
+      <h1 className="font-title text-3xl text-center text-[#004E66] mb-6 tracking-tight">
         Mapa de Seguimiento de Fichas
       </h1>
 
@@ -38,7 +38,7 @@ export default function Dashboard({
           <div className="flex items-center gap-3">
             <label className="font-semibold text-gray-700">Ciclo Escolar:</label>
             <select
-              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
               value={dashSchoolYear}
               onChange={(e) => {
                 setDashSchoolYear(e.target.value);
@@ -56,7 +56,7 @@ export default function Dashboard({
           <div className="flex items-center gap-3">
             <label className="font-semibold text-gray-700">Mes:</label>
             <select
-              className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
               value={dashSelectedMonth}
               onChange={(e) => setDashSelectedMonth(e.target.value)}
             >
@@ -74,17 +74,17 @@ export default function Dashboard({
             <label
               className={`flex items-center gap-2 cursor-pointer px-4 py-2 border-2 rounded-lg transition-colors ${
                 statusFilter === "0"
-                  ? "border-red-500 bg-red-50"
-                  : "border-gray-300 hover:bg-gray-50"
+                  ? "border-[#E94E1B] bg-[#ffe9e3]"
+                  : "border-gray-300 hover:bg-[#E8E3D3]/40"
               }`}
             >
               <input
                 type="radio"
                 checked={statusFilter === "0"}
                 onChange={() => setStatusFilter("0")}
-                className="text-red-600"
+                className="text-[#E94E1B]"
               />
-              <Pin className="w-5 h-5 text-red-500" />
+              <Pin className="w-5 h-5 text-[#E94E1B]" />
               <span className="font-medium">
                 Abiertos ({filteredTickets.length})
               </span>
@@ -92,17 +92,17 @@ export default function Dashboard({
             <label
               className={`flex items-center gap-2 cursor-pointer px-4 py-2 border-2 rounded-lg transition-colors ${
                 statusFilter === "1"
-                  ? "border-green-500 bg-green-50"
-                  : "border-gray-300 hover:bg-gray-50"
+                  ? "border-[#6DA544] bg-[#eaf3e6]"
+                  : "border-gray-300 hover:bg-[#E8E3D3]/40"
               }`}
             >
               <input
                 type="radio"
                 checked={statusFilter === "1"}
                 onChange={() => setStatusFilter("1")}
-                className="text-green-600"
+                className="text-[#6DA544]"
               />
-              <Lock className="w-5 h-5 text-green-500" />
+              <Lock className="w-5 h-5 text-[#6DA544]" />
               <span className="font-medium">Cerrados</span>
             </label>
           </div>
@@ -110,7 +110,7 @@ export default function Dashboard({
           <div className="flex gap-2">
             <button
               onClick={onExport}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 shadow transition-all"
+              className="btn btn-accent shadow"
             >
               <Download className="w-5 h-5" />
               Exportar Excel
@@ -118,13 +118,13 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+        <div className="mt-4 p-3 bg-[#E6F3F6] border border-[#cde6eb] rounded-lg text-sm text-[#004E66]">
           <span className="font-semibold">Filtros:</span>
           {dashSelectedMonth
             ? ` Mes: ${monthsForSchoolYear.find((m) => m.value === dashSelectedMonth)?.label}`
             : ` Ciclo: ${dashSchoolYear}`}
           {lastLoadedAt && (
-            <span className="ml-3 text-blue-700">
+            <span className="ml-3">
               Última actualización: {lastLoadedAt.toLocaleString("es-MX")}
             </span>
           )}
@@ -132,23 +132,23 @@ export default function Dashboard({
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500">
+        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#F7931E" }}>
           <div className="text-sm text-gray-600 flex items-center gap-2">
-            Total {kpiLoading && <Loader2 className="w-3 h-3 animate-spin text-orange-500" />}
+            Total {kpiLoading && <Loader2 className="w-3 h-3 animate-spin text-[#F7931E]" />}
           </div>
-          <div className="text-3xl font-bold text-orange-600">{kpi.total}</div>
+          <div className="text-3xl font-title text-[#F7931E]">{kpi.total}</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow border-l-4 border-red-500">
+        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#E94E1B" }}>
           <div className="text-sm text-gray-600">Abiertos</div>
-          <div className="text-3xl font-bold text-red-600">{kpi.abiertos}</div>
+          <div className="text-3xl font-title text-[#E94E1B]">{kpi.abiertos}</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
+        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#6DA544" }}>
           <div className="text-sm text-gray-600">Cerrados</div>
-          <div className="text-3xl font-bold text-green-600">{kpi.cerrados}</div>
+          <div className="text-3xl font-title text-[#6DA544]">{kpi.cerrados}</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow border-l-4 border-purple-500">
+        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#004E66" }}>
           <div className="text-sm text-gray-600">Tiempo prom. cierre</div>
-          <div className="text-2xl font-bold text-purple-600">
+          <div className="text-2xl font-title text-[#004E66]">
             {kpi.avg_resolucion_horas !== null
               ? `${Number(kpi.avg_resolucion_horas).toFixed(1)} h`
               : "—"}
@@ -159,9 +159,9 @@ export default function Dashboard({
       {showStats && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-lg text-gray-800">Distribución por Departamento</h3>
+            <h3 className="font-title text-lg text-[#004E66]">Distribución por Departamento</h3>
             <div className="text-sm text-gray-500 flex items-center gap-2">
-              {distLoading && <Loader2 className="w-4 h-4 animate-spin text-purple-600" />} Actualizado automáticamente
+              {distLoading && <Loader2 className="w-4 h-4 animate-spin text-[#018B9C]" />} Actualizado automáticamente
             </div>
           </div>
           {distStats.length > 0 ? (
@@ -169,10 +169,11 @@ export default function Dashboard({
               {distStats.map((item, idx) => (
                 <div
                   key={`${item.depto}-${idx}`}
-                  className="bg-white p-4 rounded-lg shadow border-l-4 border-orange-500"
+                  className="bg-white p-4 rounded-lg shadow border-l-4"
+                  style={{ borderLeftColor: "#F7931E" }}
                 >
                   <div className="text-sm text-gray-600">{item.depto}</div>
-                  <div className="text-2xl font-bold text-orange-600">
+                  <div className="text-2xl font-title text-[#F7931E]">
                     {Number(item.porc).toFixed(1)}%
                   </div>
                 </div>
@@ -191,8 +192,8 @@ export default function Dashboard({
           onClick={() => setShowStats(!showStats)}
           className={`px-4 py-2 rounded-lg font-medium transition-all ${
             showStats
-              ? "bg-orange-600 text-white shadow"
-              : "bg-orange-50 text-orange-700 hover:bg-orange-100"
+              ? "bg-[#F7931E] text-white shadow"
+              : "bg-[#E8E3D3] text-[#7a4a05] hover:bg-[#E8E3D3]/80"
           }`}
         >
           <TrendingUp className="inline w-5 h-5 mr-2" />
@@ -201,13 +202,13 @@ export default function Dashboard({
       </div>
 
       {loadError ? (
-        <div className="text-center py-6 bg-red-50 border border-red-200 rounded-lg text-red-700">
+        <div className="text-center py-6 bg-[#ffe9e3] border border-[#ffd3c8] rounded-lg text-[#7a200f]">
           {loadError}
         </div>
       ) : filteredTickets.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-lg shadow">
           <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500 text-lg">
+          <p className="text-gray-600 text-lg">
             No hay fichas {statusFilter === "0" ? "abiertas" : "cerradas"} con los filtros seleccionados.
           </p>
         </div>

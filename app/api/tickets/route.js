@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildNormalizedCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause, buildOriginExpr, buildPriorityExpr } from "@/lib/schema";
 import { wrapCache, getCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
@@ -137,6 +137,9 @@ export async function GET(request, context = { params: {} }) {
     const resultRows = await wrapCache(key, ttl, async () => {
       const pool = await getConnection();
 
+      const originExpr = await buildOriginExpr(pool, "f");
+      const priorityExpr = await buildPriorityExpr(pool, "f");
+
       let query = `
         SELECT 
           f.id,
@@ -157,7 +160,9 @@ export async function GET(request, context = { params: {} }) {
           f.parent_email,
           f.target_department,
           f.department_email,
-          f.appointment_date
+          f.appointment_date,
+          ${originExpr} AS origin,
+          ${priorityExpr} AS priority_level
         FROM fichas_atencion f
         WHERE 1=1
       `;
@@ -191,7 +196,7 @@ export async function GET(request, context = { params: {} }) {
       }
 
       const rowLimit = 400;
-      query += ` ORDER BY f.fecha DESC LIMIT ${rowLimit}`;
+      query += ` ORDER BY priority_level DESC, f.fecha DESC LIMIT ${rowLimit}`;
 
       console.log("[api/tickets][GET] ParamsLen:", qParams.length, "rowLimit:", rowLimit);
 

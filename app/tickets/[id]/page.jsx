@@ -49,8 +49,8 @@ export default async function TicketDetailPage({ params }) {
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="max-w-screen-md w-full bg-white rounded-lg shadow p-6">
           <div className="text-center">
-            <div className="text-2xl font-bold text-red-600 mb-2">Folio no encontrado</div>
-            <a href="/" className="inline-block mt-2 text-blue-600 underline">Volver al inicio</a>
+            <div className="font-title text-2xl text-[#E94E1B] mb-2">Folio no encontrado</div>
+            <a href="/" className="inline-block mt-2 text-[#004E66] underline">Volver al inicio</a>
           </div>
         </div>
       </div>
@@ -60,11 +60,11 @@ export default async function TicketDetailPage({ params }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <nav className="bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow">
+      <nav className="bg-brand-gradient text-white shadow">
         <div className="max-w-screen-xl mx-auto px-4">
           <div className="flex items-center justify-between py-4">
             <a href="/" className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-2 text-white">← Volver</a>
-            <div className="text-lg font-semibold">Detalle de Ficha</div>
+            <div className="font-title text-lg">Detalle de Ficha</div>
             <div />
           </div>
         </div>

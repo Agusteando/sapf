@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildNormalizedCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause, originIsParentConditionExpr } from "@/lib/schema";
 import { getCache, setCache } from "@/lib/cache";
 import { computeWeakETagFromString } from "@/lib/etag";
 
@@ -114,6 +114,7 @@ export async function GET(request, context = { params: {} }) {
     }
 
     const where = [campusClause.clause, dateClause].join(" AND ");
+    const parentCond = await originIsParentConditionExpr(pool, "");
 
     const [rows] = await pool.execute(
       `
@@ -122,6 +123,7 @@ export async function GET(request, context = { params: {} }) {
         SUM(CASE WHEN status = '0' THEN 1 ELSE 0 END) AS abiertos,
         SUM(CASE WHEN status = '1' THEN 1 ELSE 0 END) AS cerrados,
         SUM(CASE WHEN is_complaint = 1 THEN 1 ELSE 0 END) AS quejas,
+        SUM(CASE WHEN ${parentCond} THEN 1 ELSE 0 END) AS padres,
         AVG(CASE WHEN status = '1' THEN TIMESTAMPDIFF(HOUR, fecha, COALESCE(updated_at, NOW())) END) AS avg_resolucion_horas
       FROM fichas_atencion
       WHERE ${where}
@@ -134,6 +136,7 @@ export async function GET(request, context = { params: {} }) {
       abiertos: 0,
       cerrados: 0,
       quejas: 0,
+      padres: 0,
       avg_resolucion_horas: null,
     };
 

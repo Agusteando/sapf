@@ -37,14 +37,14 @@ export default function EmailChips({ value, onChange, suggestions = [] }) {
 
   return (
     <div className="w-full">
-      <div className="flex flex-wrap gap-2 items-center rounded border border-blue-200 bg-blue-50 p-2">
+      <div className="flex flex-wrap gap-2 items-center rounded border border-[#018B9C] bg-[#E8E3D3]/60 p-2">
         {(value || []).map((email) => {
           const sug = resolveSuggestion(email);
           return (
-            <span key={email} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-blue-600 text-white text-xs">
+            <span key={email} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-[#018B9C] text-white text-xs">
               <span className="font-medium">{sug?.name || email}</span>
-              <span className="opacity-80">&lt;{email}&gt;</span>
-              <button onClick={() => removeEmail(email)} className="ml-1 hover:text-blue-200" aria-label="Quitar">
+              <span className="opacity-90">&lt;{email}&gt;</span>
+              <button onClick={() => removeEmail(email)} className="ml-1 hover:text-[#E8E3D3]" aria-label="Quitar">
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -59,7 +59,7 @@ export default function EmailChips({ value, onChange, suggestions = [] }) {
           className="flex-1 bg-transparent outline-none text-sm p-1"
         />
         <button
-          className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#6DA544] text-white text-xs hover:bg-[#356635]"
           onClick={() => input && addEmail(input)}
         >
           <Plus className="w-3 h-3" />
@@ -67,11 +67,11 @@ export default function EmailChips({ value, onChange, suggestions = [] }) {
         </button>
       </div>
       {open && filtered.length > 0 && (
-        <div className="mt-1 max-h-40 overflow-auto rounded border border-blue-200 bg-white shadow">
+        <div className="mt-1 max-h-40 overflow-auto rounded border border-[#018B9C]/40 bg-white shadow">
           {filtered.map((s) => (
             <div
               key={s.email}
-              className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex items-center gap-2"
+              className="px-3 py-2 text-sm hover:bg-[#E8E3D3]/40 cursor-pointer flex items-center gap-2"
               onClick={() => addEmail(s.email)}
             >
               <span className="font-medium">{s.name || s.email}</span>

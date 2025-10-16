@@ -3,22 +3,13 @@
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  Search,
-  Users,
   AlertCircle,
   Save,
   FileText,
   TrendingUp,
   Lock,
   Pin,
-  Edit2,
-  Check,
-  Download,
-  BarChart3,
-  CornerDownRight,
   Stethoscope,
-  Plus,
-  X,
   Loader2
 } from "lucide-react";
 import Overlay from "@/components/overlay";
@@ -35,7 +26,7 @@ import { departmentOptions, combinedEmailLabel } from "@/lib/ui";
 
 export default function ParentAttentionSystem() {
   const [currentView, setCurrentView] = useState("dashboard");
-  const [selectedCampus, setSelectedCampus] = useState("PMB");
+  const [selectedCampus, setSelectedCampus] = useState("");
   const [tickets, setTickets] = useState([]);
   const [students, setStudents] = useState([]);
   const [departments, setDepartments] = useState({});
@@ -83,7 +74,6 @@ export default function ParentAttentionSystem() {
   });
 
   const [duplicate, setDuplicate] = useState(null);
-
   const [institutionalNames, setInstitutionalNames] = useState({});
 
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
@@ -96,7 +86,41 @@ export default function ParentAttentionSystem() {
   const [distStats, setDistStats] = useState([]);
   const [distLoading, setDistLoading] = useState(false);
 
-  const campuses = [
+  // Load profile to set initial campus & origin department
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/profile", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!mounted) return;
+        const prefCampus = data?.preference?.campus || data?.detected?.campus || "";
+        const prefDept = data?.preference?.department_name || data?.detected?.department_name || "";
+        setSelectedCampus(prefCampus || "PMB");
+        setFormData((prev) => ({
+          ...prev,
+          selectedDepartment: prev.selectedDepartment || prefDept || "",
+        }));
+      } catch {
+        // fallback
+        setSelectedCampus((c) => c || "PMB");
+      }
+    })();
+    function handleProfileUpdate(e) {
+      const campus = e?.detail?.campus || "";
+      const department = e?.detail?.department_name || "";
+      if (campus) setSelectedCampus(campus);
+      if (department) setFormData((p) => ({ ...p, selectedDepartment: department }));
+    }
+    window.addEventListener("sapf:profile-updated", handleProfileUpdate);
+    return () => {
+      mounted = false;
+      window.removeEventListener("sapf:profile-updated", handleProfileUpdate);
+    };
+  }, []);
+
+  const campuses = useMemo(() => ([
     { value: "PMB", label: "Primaria Baja Metepec" },
     { value: "PMA", label: "Primaria Alta Metepec" },
     { value: "PT", label: "Primaria Toluca" },
@@ -105,7 +129,7 @@ export default function ParentAttentionSystem() {
     { value: "CM", label: "Casita Metepec" },
     { value: "CT", label: "Casita Toluca" },
     { value: "DM", label: "Desarrollo Metepec" },
-  ];
+  ]), []);
 
   const fallbackDepartmentOptions = [
     "Administración",
@@ -213,6 +237,7 @@ export default function ParentAttentionSystem() {
   }
 
   const fetchDepartments = useCallback(async () => {
+    if (!selectedCampus) return;
     await trackAsync(async () => {
       try {
         const response = await fetch(`/api/departments/${selectedCampus}`, { cache: "no-store", headers: { "x-client": "sapf-app" } });
@@ -274,9 +299,9 @@ export default function ParentAttentionSystem() {
 
   useEffect(() => {
     if (currentView === "form" || currentView === "nursing") {
-      fetchStudentData(selectedCampus);
+      if (selectedCampus) fetchStudentData(selectedCampus);
     }
-    if (currentView === "form" || currentView === "departments") {
+    if ((currentView === "form" || currentView === "departments") && selectedCampus) {
       fetchDepartments();
     }
   }, [currentView, selectedCampus, fetchStudentData, fetchDepartments]);
@@ -377,7 +402,7 @@ export default function ParentAttentionSystem() {
   }, [dashSchoolYear]);
 
   const buildDashboardQS = useCallback(() => {
-    let qs = `campus=${encodeURIComponent(selectedCampus)}`;
+    let qs = `campus=${encodeURIComponent(selectedCampus || "")}`;
     if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
       qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
     }
@@ -435,7 +460,7 @@ export default function ParentAttentionSystem() {
         if (!abort) setKpiLoading(false);
       });
     }
-    if (currentView === "dashboard") {
+    if (currentView === "dashboard" && selectedCampus) {
       fetchDashboard();
     }
     return () => { abort = true; };
@@ -447,6 +472,7 @@ export default function ParentAttentionSystem() {
       setDistLoading(true);
       await trackAsync(async () => {
         try {
+          if (!selectedCampus) return;
           let distUrl = `/api/stats/distribution?campus=${encodeURIComponent(selectedCampus)}`;
           if (dashSelectedMonth) {
             distUrl += `&month=${encodeURIComponent(dashSelectedMonth)}`;
@@ -483,6 +509,10 @@ export default function ParentAttentionSystem() {
   }
 
   const exportToExcel = () => {
+    if (!selectedCampus) {
+      alert("Selecciona un plantel para exportar.");
+      return;
+    }
     const base = `/api/export-excel?campus=${encodeURIComponent(selectedCampus)}&status=`;
     const r = computeMonthRange(dashSelectedMonth);
     if (r) {
@@ -497,7 +527,13 @@ export default function ParentAttentionSystem() {
     }
   };
 
+  const canSubmitTicket = Boolean(selectedCampus && formData.selectedDepartment);
+
   const submitTicket = async () => {
+    if (!canSubmitTicket) {
+      alert("Configura tu Plantel y Departamento en la barra superior antes de generar una ficha.");
+      return;
+    }
     if (!formData.parentName || !formData.reason || !formData.resolution) {
       alert("Por favor complete todos los campos requeridos");
       return;
@@ -669,11 +705,14 @@ export default function ParentAttentionSystem() {
   }
 
   async function onNursingStudentSelected(student, prefill) {
-    // No-op here; form manages local state, this validates hook path if needed later.
     console.log("[Nursing] onStudentSelected", !!student, prefill?.studentName || "");
   }
 
   async function onSubmitNursingReport({ parentName, parentEmail, studentName, report, actions }) {
+    if (!selectedCampus) {
+      alert("Configura tu Plantel en la barra superior.");
+      return;
+    }
     if (!parentName || !parentEmail || !studentName || !report) {
       alert("Completa los campos requeridos (Padre/Madre, Correo, Alumno, Reporte).");
       return;
@@ -712,7 +751,7 @@ export default function ParentAttentionSystem() {
       const subject = `Reporte de Enfermería — Folio ${folio}`;
       const html = `
         <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #111827;">
-          <h2 style="color:#065f46;margin:0 0 10px 0;">Reporte de Enfermería</h2>
+          <h2 style="color:#356635;margin:0 0 10px 0;">Reporte de Enfermería</h2>
           <p style="margin: 0 0 10px 0;">Folio: <strong>${folio}</strong></p>
           <p style="margin: 0 0 10px 0;">Plantel: <strong>${selectedCampus}</strong></p>
           <p style="margin: 0 0 10px 0;">Alumno: <strong>${studentName}</strong></p>
@@ -773,89 +812,62 @@ export default function ParentAttentionSystem() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <TopActivityBar active={activeOps > 0} />
-      <nav className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-200">
-        <div className="max-w-screen-xl mx-auto px-4">
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:justify-between sm:items-center py-3">
-            <div className="flex items-center gap-3">
-              <div className="text-xl sm:text-2xl font-extrabold text-orange-600 tracking-tight">
-                SAPF
-              </div>
-              <div className="hidden sm:block text-gray-400">•</div>
-              <div className="text-sm sm:text-base text-gray-700">Sistema de Atención a Padres de Familia</div>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-gray-700">Plantel</label>
-              <select
-                className="p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
-                value={selectedCampus}
-                onChange={(e) => setSelectedCampus(e.target.value)}
-              >
-                {campuses.map((campus) => (
-                  <option key={campus.value} value={campus.value}>
-                    {campus.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 pb-3">
-            <button
-              onClick={() => setCurrentView("dashboard")}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                currentView === "dashboard"
-                  ? "bg-orange-600 text-white shadow"
-                  : "bg-orange-50 text-orange-700 hover:bg-orange-100"
-              }`}
-            >
-              <TrendingUp className="inline w-5 h-5 mr-2" />
-              Dashboard
-            </button>
-            <button
-              onClick={() => setCurrentView("form")}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                currentView === "form"
-                  ? "bg-blue-600 text-white shadow"
-                  : "bg-blue-50 text-blue-700 hover:bg-blue-100"
-              }`}
-            >
-              <FileText className="inline w-5 h-5 mr-2" />
-              Nueva Ficha
-            </button>
-            <button
-              onClick={() => setCurrentView("departments")}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                currentView === "departments"
-                  ? "bg-indigo-600 text-white shadow"
-                  : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-              }`}
-            >
-              <Users className="inline w-5 h-5 mr-2" />
-              Departamentos
-            </button>
-            <button
-              onClick={() => setCurrentView("nursing")}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                currentView === "nursing"
-                  ? "bg-emerald-600 text-white shadow"
-                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-              }`}
-            >
-              <Stethoscope className="inline w-5 h-5 mr-2" />
-              Reporte de Enfermería
-            </button>
-            <a
-              href="/compare"
-              className="px-4 py-2 rounded-lg font-medium transition-all bg-orange-50 text-orange-700 hover:bg-orange-100"
-            >
-              <TrendingUp className="inline w-5 h-5 mr-2" />
-              Comparar planteles
-            </a>
-          </div>
-        </div>
-      </nav>
 
       <main className="max-w-screen-xl mx-auto py-6 px-4">
-        {currentView === "dashboard" && (
+        {/* Route tabs */}
+        <div className="flex flex-wrap gap-2 pb-4">
+          <button
+            onClick={() => setCurrentView("dashboard")}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              currentView === "dashboard"
+                ? "bg-[#004E66] text-white shadow"
+                : "bg-[#E6F3F6] text-[#004E66] hover:bg-[#E6F3F6]/80"
+            }`}
+          >
+            <TrendingUp className="inline w-5 h-5 mr-2" />
+            Dashboard
+          </button>
+          <button
+            onClick={() => setCurrentView("form")}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              currentView === "form"
+                ? "bg-[#6DA544] text-white shadow"
+                : "bg-[#eaf3e6] text-[#356635] hover:bg-[#eaf3e6]/80"
+            }`}
+          >
+            <FileText className="inline w-5 h-5 mr-2" />
+            Nueva Ficha
+          </button>
+          <button
+            onClick={() => setCurrentView("departments")}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              currentView === "departments"
+                ? "bg-[#018B9C] text-white shadow"
+                : "bg-[#E6F3F6] text-[#004E66] hover:bg-[#E6F3F6]/80"
+            }`}
+          >
+            Departamentos
+          </button>
+          <button
+            onClick={() => setCurrentView("nursing")}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              currentView === "nursing"
+                ? "bg-[#F7931E] text-white shadow"
+                : "bg-[#FFF3E6] text-[#7a4a05] hover:bg-[#FFF3E6]/80"
+            }`}
+          >
+            <Stethoscope className="inline w-5 h-5 mr-2" />
+            Reporte de Enfermería
+          </button>
+          <a
+            href="/compare"
+            className="px-4 py-2 rounded-lg font-medium transition-all bg-[#E6F3F6] text-[#004E66] hover:bg-[#E6F3F6]/80"
+          >
+            Comparar planteles
+          </a>
+        </div>
+
+        {currentView === "dashboard" && selectedCampus && (
           <Dashboard
             kpi={lastGoodKpiRef.current || kpi}
             kpiLoading={kpiLoading}
@@ -882,15 +894,24 @@ export default function ParentAttentionSystem() {
         {currentView === "form" && (
           <div className="bg-white p-6 rounded-lg shadow-lg">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-orange-500">
-                Nueva Ficha - {campuses.find((c) => c.value === selectedCampus)?.label}
+              <h2 className="font-title text-2xl text-[#004E66]">
+                Nueva Ficha {selectedCampus ? `— ${campuses.find((c) => c.value === selectedCampus)?.label}` : ""}
               </h2>
               {formData.studentPhotoUrl ? (
-                <div className="relative w-16 h-16 rounded-full ring-4 ring-orange-300 overflow-hidden">
+                <div className="relative w-16 h-16 rounded-full ring-4 ring-[#F7931E] overflow-hidden">
                   <img src={formData.studentPhotoUrl} alt="Alumno" loading="lazy" className="w-full h-full object-cover" />
                 </div>
               ) : null}
             </div>
+
+            {!canSubmitTicket && (
+              <div className="mb-4 p-4 bg-[#ffe9e3] border border-[#ffd3c8] rounded-lg flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-[#E94E1B]" />
+                <span className="text-[#7a200f]">
+                  Configura tu Plantel y Departamento desde la barra superior para poder generar fichas.
+                </span>
+              </div>
+            )}
 
             <SearchStudent
               students={students}
@@ -898,9 +919,9 @@ export default function ParentAttentionSystem() {
             />
 
             {duplicate && duplicate.dup === 1 && (
-              <div className="mt-3 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-red-600" />
-                <span className="text-red-700">
+              <div className="mt-3 p-4 bg-[#ffe9e3] border border-[#ffd3c8] rounded-lg flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-[#E94E1B]" />
+                <span className="text-[#7a200f]">
                   Ya existe un folio abierto para {formData.parentName}. Folio:{" "}
                   {String(duplicate.id).padStart(5, "0")} — se agregará seguimiento por defecto.
                 </span>
@@ -912,7 +933,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Nombre del Padre/Madre/Tutor</label>
                 <input
                   type="text"
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.parentName}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, parentName: e.target.value }))
@@ -923,7 +944,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Alumno</label>
                 <input
                   type="text"
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.studentName}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, studentName: e.target.value }))
@@ -934,7 +955,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Teléfono</label>
                 <input
                   type="tel"
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.phoneNumber}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, phoneNumber: e.target.value }))
@@ -945,7 +966,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Correo</label>
                 <input
                   type="email"
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.parentEmail}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, parentEmail: e.target.value }))
@@ -956,7 +977,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Motivo</label>
                 <textarea
                   rows={4}
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.reason}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, reason: e.target.value }))
@@ -967,7 +988,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Resolución / Acción inicial</label>
                 <textarea
                   rows={4}
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.resolution}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, resolution: e.target.value }))
@@ -977,7 +998,7 @@ export default function ParentAttentionSystem() {
               <div className="grid gap-3">
                 <label className="text-sm font-semibold text-gray-700">Medio de contacto</label>
                 <select
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.contactMethod}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, contactMethod: e.target.value }))
@@ -998,7 +1019,7 @@ export default function ParentAttentionSystem() {
                 <div className="flex items-center gap-3">
                   <input
                     type="datetime-local"
-                    className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                    className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C] disabled:bg-gray-100 disabled:text-gray-500"
                     value={formData.appointmentDate}
                     onChange={(e) =>
                       setFormData((p) => ({ ...p, appointmentDate: e.target.value }))
@@ -1024,7 +1045,7 @@ export default function ParentAttentionSystem() {
               <div className="grid gap-3">
                 <label className="text-sm font-semibold text-gray-700">Departamento de origen</label>
                 <select
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.selectedDepartment}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, selectedDepartment: e.target.value }))
@@ -1062,7 +1083,7 @@ export default function ParentAttentionSystem() {
               <div className="grid gap-3">
                 <label className="text-sm font-semibold text-gray-700">Estatus</label>
                 <select
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
                   value={formData.status}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, status: e.target.value }))
@@ -1073,22 +1094,21 @@ export default function ParentAttentionSystem() {
                 </select>
               </div>
               <div className="grid gap-3 md:col-span-2">
-                <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                <div className="rounded border border-[#cde6eb] bg-[#E6F3F6] p-3 text-sm text-[#004E66]">
                   {formData.targetDepartment ? (
-                    <>
-                      Un correo será enviado a: <strong>{canalizadoCombined}</strong>
-                      {canalizadoSup ? <> y copia al supervisor: <strong>{canalizadoSupCombined}</strong></> : <> (sin supervisor configurado)</>}
-                      <div className="mt-2">
-                        Correos adicionales (internos):
-                        <EmailChips
-                          value={formData.ccEmails}
-                          onChange={(next) => setFormData((p) => ({ ...p, ccEmails: next }))}
-                          suggestions={internalEmailSuggestions}
-                        />
-                      </div>
-                    </>
+                    <>Se notificará al departamento y su supervisor. Puedes agregar copias internas abajo.</>
                   ) : (
                     <>No hay canalización seleccionada. Si canalizas, se notificará automáticamente al departamento y su supervisor.</>
+                  )}
+                  {formData.targetDepartment && (
+                    <div className="mt-2">
+                      Correos adicionales (internos):
+                      <EmailChips
+                        value={formData.ccEmails}
+                        onChange={(next) => setFormData((p) => ({ ...p, ccEmails: next }))}
+                        suggestions={internalEmailSuggestions}
+                      />
+                    </div>
                   )}
                 </div>
               </div>
@@ -1114,7 +1134,8 @@ export default function ParentAttentionSystem() {
             <div className="flex items-center gap-3 mt-6">
               <button
                 onClick={submitTicket}
-                className="px-5 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-2"
+                disabled={!canSubmitTicket}
+                className="px-5 py-2 bg-[#F7931E] hover:bg-[#e88510] text-white rounded-lg flex items-center gap-2 disabled:opacity-60"
               >
                 {activeOps > 0 ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                 Guardar Ficha
@@ -1123,7 +1144,7 @@ export default function ParentAttentionSystem() {
           </div>
         )}
 
-        {currentView === "departments" && (
+        {currentView === "departments" && selectedCampus && (
           <DepartmentManager
             campusLabel={campuses.find((c) => c.value === selectedCampus)?.label}
             departments={departments}
@@ -1134,7 +1155,7 @@ export default function ParentAttentionSystem() {
           />
         )}
 
-        {currentView === "nursing" && (
+        {currentView === "nursing" && selectedCampus && (
           <NursingReport
             selectedCampusLabel={campuses.find((c) => c.value === selectedCampus)?.label}
             students={students}
@@ -1142,6 +1163,12 @@ export default function ParentAttentionSystem() {
             onSubmit={onSubmitNursingReport}
             sending={activeOps > 0}
           />
+        )}
+
+        {!selectedCampus && (
+          <div className="mt-4 p-4 bg-[#E6F3F6] border border-[#cde6eb] rounded-lg text-[#004E66]">
+            Selecciona o configura tu Plantel desde la barra superior para continuar.
+          </div>
         )}
       </main>
 

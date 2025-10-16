@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
-import { buildNormalizedCampusClause } from "@/lib/schema";
+import { buildNormalizedCampusClause, buildOriginExpr, buildPriorityExpr, originIsParentConditionExpr } from "@/lib/schema";
 import { wrapCache, getCache } from "@/lib/cache";
 import { computeWeakETagFromString } from "@/lib/etag";
 
@@ -128,6 +128,11 @@ export async function GET(request, context = { params: {} }) {
         statusParams.push(status);
       }
 
+      // Origin/Priority dynamic expressions and parent-origin condition for KPI
+      const originExpr = await buildOriginExpr(pool, "f");
+      const priorityExpr = await buildPriorityExpr(pool, "f");
+      const parentCond = await originIsParentConditionExpr(pool, "f");
+
       const rowLimit = 400;
       const shouldFetchFollowups = true;
 
@@ -151,10 +156,12 @@ export async function GET(request, context = { params: {} }) {
           f.parent_email,
           f.target_department,
           f.department_email,
-          f.appointment_date
+          f.appointment_date,
+          ${originExpr} AS origin,
+          ${priorityExpr} AS priority_level
         FROM fichas_atencion f
         WHERE ${campusClause.clause} AND ${dateClause} AND ${statusClause}
-        ORDER BY f.fecha DESC
+        ORDER BY priority_level DESC, f.fecha DESC
         LIMIT ${rowLimit}
       `;
       const tParams = [...campusClause.params, ...dateParams, ...statusParams];
@@ -165,6 +172,7 @@ export async function GET(request, context = { params: {} }) {
           SUM(CASE WHEN f.status = '0' THEN 1 ELSE 0 END) AS abiertos,
           SUM(CASE WHEN f.status = '1' THEN 1 ELSE 0 END) AS cerrados,
           SUM(CASE WHEN f.is_complaint = 1 THEN 1 ELSE 0 END) AS quejas,
+          SUM(CASE WHEN ${parentCond} THEN 1 ELSE 0 END) AS padres,
           AVG(CASE WHEN f.status = '1' THEN TIMESTAMPDIFF(HOUR, f.fecha, COALESCE(f.updated_at, NOW())) END) AS avg_resolucion_horas
         FROM fichas_atencion f
         WHERE ${campusClause.clause} AND ${dateClause}
@@ -223,6 +231,7 @@ export async function GET(request, context = { params: {} }) {
         abiertos: 0,
         cerrados: 0,
         quejas: 0,
+        padres: 0,
         avg_resolucion_horas: null,
       };
 

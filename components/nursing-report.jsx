@@ -48,14 +48,14 @@ export default function NursingReport({
   return (
     <div className="bg-white p-6 rounded-lg shadow-lg">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-bold text-emerald-600 flex items-center gap-2">
-          <Stethoscope className="w-6 h-6" />
+        <h2 className="font-title text-2xl text-[#356635] flex items-center gap-2">
+          <Stethoscope className="w-6 h-6 text-[#6DA544]" />
           Reporte de Enfermería
         </h2>
         <div className="text-sm text-gray-500">{selectedCampusLabel}</div>
       </div>
 
-      <div className="mb-4 p-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 text-emerald-900">
+      <div className="mb-4 p-4 rounded-lg border-2 border-[#6DA544] bg-[#eaf3e6] text-[#356635]">
         Esta sección es la única que envía reportes por correo a padres/madres/tutores.
       </div>
 
@@ -70,7 +70,7 @@ export default function NursingReport({
           <label className="text-sm font-semibold text-gray-700">Alumno</label>
           <div className="flex items-center gap-3">
             {studentName ? (
-              <div className="relative w-12 h-12 rounded-full ring-2 ring-emerald-400 overflow-hidden">
+              <div className="relative w-12 h-12 rounded-full ring-2 ring-[#6DA544] overflow-hidden">
                 {studentName && (
                   <img src={studentPhoto || ""} alt={studentName} loading="lazy" className="w-full h-full object-cover" />
                 )}
@@ -78,7 +78,7 @@ export default function NursingReport({
             ) : null}
             <input
               type="text"
-              className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
               value={studentName}
               onChange={(e) => setStudentName(e.target.value)}
             />
@@ -88,7 +88,7 @@ export default function NursingReport({
           <label className="text-sm font-semibold text-gray-700">Padre/Madre/Tutor</label>
           <input
             type="text"
-            className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+            className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
             value={parentName}
             onChange={(e) => setParentName(e.target.value)}
           />
@@ -97,7 +97,7 @@ export default function NursingReport({
           <label className="text-sm font-semibold text-gray-700">Correo de contacto (padres)</label>
           <input
             type="email"
-            className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+            className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
             value={parentEmail}
             onChange={(e) => setParentEmail(e.target.value)}
           />
@@ -106,7 +106,7 @@ export default function NursingReport({
           <label className="text-sm font-semibold text-gray-700">Reporte / Observaciones</label>
           <textarea
             rows={5}
-            className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+            className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
             value={report}
             onChange={(e) => setReport(e.target.value)}
             placeholder="Describa síntomas, incidentes, medidas aplicadas, etc."
@@ -116,7 +116,7 @@ export default function NursingReport({
           <label className="text-sm font-semibold text-gray-700">Acciones / Recomendaciones (opcional)</label>
           <textarea
             rows={4}
-            className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+            className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
             value={actions}
             onChange={(e) => setActions(e.target.value)}
             placeholder="Indicaciones para seguimiento en casa, etc."
@@ -128,7 +128,7 @@ export default function NursingReport({
         <button
           onClick={submit}
           disabled={sending}
-          className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-2 disabled:opacity-60"
+          className="btn btn-brand disabled:opacity-60"
         >
           {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Stethoscope className="w-5 h-5" />}
           Enviar Reporte a Padres

@@ -45,23 +45,23 @@ export default function FollowupForm({
   return (
     <div className="grid gap-4">
       <div className="grid gap-1">
-        <div className="text-sm text-gray-500">
+        <div className="text-sm text-gray-600">
           Fecha: {new Date(ticket.fecha).toLocaleString("es-MX")}
         </div>
-        <div className="text-lg font-semibold text-gray-800">
+        <div className="font-title text-lg text-[#004E66]">
           Folio {ticket.folio_number || String(ticket.id).padStart(5, "0")}
         </div>
         <div className="flex items-center gap-3">
           {ticket.status === "1" ? (
-            <span className="inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1 text-green-700 text-sm">
+            <span className="badge badge-green">
               <Lock className="w-4 h-4" /> Cerrado
             </span>
           ) : (
-            <span className="inline-flex items-center gap-2 rounded-full bg-red-50 px-3 py-1 text-red-700 text-sm">
+            <span className="badge badge-coral">
               <Pin className="w-4 h-4" /> Abierto
             </span>
           )}
-          <span className="text-sm text-gray-600">
+          <span className="text-sm text-gray-700">
             Plantel: {ticket.school_code || ticket.campus}
           </span>
         </div>
@@ -81,7 +81,7 @@ export default function FollowupForm({
         <div className="font-semibold text-gray-800">Agregar seguimiento</div>
         <textarea
           rows={6}
-          className="w-full rounded border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full rounded border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
           placeholder="Describe el seguimiento..."
           value={resolution}
           onChange={(e) => setResolution(e.target.value)}
@@ -92,7 +92,7 @@ export default function FollowupForm({
         <div className="grid gap-1">
           <label className="text-sm font-medium text-gray-700">Estatus</label>
           <select
-            className="rounded border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
           >
@@ -124,7 +124,7 @@ export default function FollowupForm({
         </div>
       </div>
 
-      <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+      <div className="rounded border border-[#cde6eb] bg-[#E6F3F6] p-3 text-sm text-[#004E66]">
         {targetDepartment ? (
           <>
             Un correo será enviado a: <strong>{deptCombined || "—"}</strong>
@@ -186,7 +186,7 @@ export default function FollowupForm({
       )}
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded border border-[#ffd3c8] bg-[#ffe9e3] p-3 text-sm text-[#7a200f]">
           {error}
         </div>
       )}
@@ -195,7 +195,7 @@ export default function FollowupForm({
         <button
           onClick={submitFollowup}
           disabled={sending}
-          className="inline-flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-white hover:bg-orange-600 disabled:opacity-60"
+          className="btn btn-accent disabled:opacity-60"
         >
           {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
           Guardar seguimiento

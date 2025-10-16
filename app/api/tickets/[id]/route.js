@@ -1,6 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
+import { buildOriginExpr, buildPriorityExpr } from "@/lib/schema";
 
 function followupEmailHTML({ folio, campus, dept, parentName, studentName, resolution, status }) {
   const statusText = status === "1" ? "Cerrado" : "Abierto";
@@ -62,8 +63,34 @@ export async function GET(request, context = { params: {} }) {
     console.log("[api/tickets/:id][GET] id:", id);
     const connection = await getConnection();
 
+    const originExpr = await buildOriginExpr(connection, "");
+    const priorityExpr = await buildPriorityExpr(connection, "");
+
     const [tickets] = await connection.execute(
-      'SELECT *, LPAD(id, 5, "0") as folio_number FROM fichas_atencion WHERE id = ?',
+      `SELECT 
+         id,
+         LPAD(id, 5, "0") as folio_number,
+         fecha,
+         status,
+         created_by,
+         original_department,
+         parent_name,
+         student_name,
+         reason,
+         resolution,
+         is_complaint,
+         campus,
+         school_code,
+         contact_method,
+         phone_number,
+         parent_email,
+         target_department,
+         department_email,
+         appointment_date,
+         ${originExpr} AS origin,
+         ${priorityExpr} AS priority_level
+       FROM fichas_atencion 
+       WHERE id = ?`,
       [id]
     );
 

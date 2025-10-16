@@ -3,7 +3,7 @@
 
 import { useEffect, useRef } from "react";
 import Image from "next/image";
-import { Shield, LogIn } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 
 const GSI_CLIENT_ID = process.env.NEXT_PUBLIC_GSI_CLIENT_ID;
 
@@ -47,11 +47,11 @@ export default function LoginPage() {
         window.google.accounts.id.renderButton(el, {
           type: "standard",
           shape: "pill",
-          theme: "filled_blue",
-          text: "sign_in_with",
+          theme: "outline",
+          text: "signin_with",
           size: "large",
           logo_alignment: "left",
-          width: 280,
+          width: 360,
           locale: "es",
         });
       }
@@ -75,37 +75,64 @@ export default function LoginPage() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-purple-50 via-fuchsia-50 to-cyan-50 p-4">
-      <div className="w-full max-w-md sm:max-w-lg mx-auto bg-white/90 shadow-2xl rounded-3xl px-6 sm:px-10 py-8 sm:py-12 border border-purple-100 backdrop-blur-2xl">
-        <div className="flex flex-col items-center gap-2 mb-6 select-none">
-          <div className="mb-2 relative w-16 h-16">
-            <Image
-              src="/IMAGOTIPO-IECS-IEDIS.png"
-              alt="IECS-IEDIS"
-              fill
-              className="object-contain bg-white rounded-xl shadow-sm"
-              priority
-            />
+    <div className="min-h-screen relative overflow-hidden">
+      {/* Brand background */}
+      <div className="absolute inset-0 bg-brand-gradient opacity-90" />
+      <div className="absolute -top-32 -right-24 w-[60vw] h-[60vw] rounded-full bg-sun-gradient blur-3xl opacity-40 pointer-events-none" />
+      <div className="absolute -bottom-24 -left-24 w-[55vw] h-[55vw] rounded-full bg-[#6DA544] blur-3xl opacity-30 pointer-events-none" />
+
+      {/* Content */}
+      <div className="relative z-10 min-h-screen flex items-center justify-center p-4">
+        <div className="w-full max-w-2xl mx-auto bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl border border-[#cde6eb]">
+          <div className="p-8 sm:p-12">
+            {/* Logos */}
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative w-64 h-16 sm:w-80 sm:h-20">
+                <Image
+                  src="/sapf-h.png"
+                  alt="SAPF"
+                  fill
+                  priority
+                  className="object-contain"
+                />
+              </div>
+              <div className="text-center">
+                <div className="font-title text-2xl sm:text-3xl text-[#004E66]">
+                  Bienvenido(a)
+                </div>
+                <div className="mt-1 text-sm text-gray-600">
+                  Accede con tu correo institucional de Google
+                </div>
+              </div>
+            </div>
+
+            {/* Google Sign-in */}
+            <div className="mt-8 flex flex-col items-center">
+              <div className="w-full flex flex-col items-center gap-4">
+                <div
+                  id="g_id_signin"
+                  className="w-full flex flex-col items-center"
+                  aria-label="Botón de inicio de sesión con Google"
+                />
+              </div>
+            </div>
+
+            {/* Footer note with vertical logo */}
+            <div className="mt-10 flex items-center justify-center gap-3 text-xs text-gray-600">
+              <div className="relative w-8 h-8">
+                <Image
+                  src="/sapf.png"
+                  alt="Logo SAPF"
+                  fill
+                  className="object-contain"
+                />
+              </div>
+              <div>
+                <ShieldCheck className="inline w-4 h-4 text-[#018B9C] mr-1" />
+                Acceso seguro con Google • Plataforma oficial SAPF
+              </div>
+            </div>
           </div>
-          <span className="font-bold text-lg text-purple-900">IECS-IEDIS</span>
-        </div>
-
-        <div className="mx-auto mb-2 text-center inline-flex items-center gap-2 font-bold text-base sm:text-xl text-purple-900">
-          <Shield className="w-7 h-7 text-fuchsia-700" />
-          Acceso a la Plataforma
-        </div>
-
-        <div className="text-slate-600 text-xs sm:text-sm font-semibold text-center mb-7">
-          Inicia sesión con tu correo institucional de Google.
-        </div>
-
-        <div className="w-full flex flex-col items-center gap-3">
-          <div id="g_id_signin" className="mb-2 w-full flex flex-col items-center"></div>
-        </div>
-
-        <div className="w-full text-center text-xs mt-6 text-slate-500">
-          <LogIn className="w-4 h-4 inline mr-1 mb-0.5 text-fuchsia-600" />
-          Se requiere correo institucional. Si tienes problemas para ingresar, contacta a soporte.
         </div>
       </div>
     </div>
