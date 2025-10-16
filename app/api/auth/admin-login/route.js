@@ -2,6 +2,9 @@
 import { NextResponse } from "next/server";
 import { createSessionCookie } from "@/lib/auth";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 // Validates Google ID token using Google tokeninfo endpoint, checks allowed domains/emails,
 // and issues a signed, HttpOnly session cookie upon success.
 

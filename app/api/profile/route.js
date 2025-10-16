@@ -4,6 +4,9 @@ import { SESSION_COOKIE_NAME, verifySessionValue } from "@/lib/auth";
 import { getConnection } from "@/lib/db";
 import { CAMPUS_MAP } from "@/lib/campus";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 const PREF_COOKIE = "sapf_pref";
 
 function parseCookie(header) {

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { verifySessionValue, SESSION_COOKIE_NAME } from "@/lib/auth";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function parseCookie(header) {
   const out = {};

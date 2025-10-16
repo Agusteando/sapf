@@ -4,6 +4,7 @@ import { getConnection } from "@/lib/db";
 import { getCache, setCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function currentSchoolYearLabel(d = new Date()) {
   const y = d.getUTCFullYear();

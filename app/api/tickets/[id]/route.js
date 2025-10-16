@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 import { buildOriginExpr, buildPriorityExpr } from "@/lib/schema";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 function followupEmailHTML({ folio, campus, dept, parentName, studentName, resolution, status }) {
   const statusText = status === "1" ? "Cerrado" : "Abierto";
   return `

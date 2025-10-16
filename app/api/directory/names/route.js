@@ -5,6 +5,7 @@ import { wrapCache } from "@/lib/cache";
 import { getDisplayNames } from "@/lib/googleDirectory";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function splitDomains(envVal) {
   return String(envVal || "")

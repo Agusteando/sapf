@@ -5,6 +5,7 @@ import { buildNormalizedCampusClause } from "@/lib/schema";
 import { getCache, setCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function monthRange(yyyyMm) {
   const ok = /^\d{4}-\d{2}$/.test(yyyyMm);

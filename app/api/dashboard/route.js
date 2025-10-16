@@ -6,6 +6,7 @@ import { wrapCache, getCache } from "@/lib/cache";
 import { computeWeakETagFromString } from "@/lib/etag";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // Lightweight server-side throttle to suppress rapid repeats per client+query
 const throttleMap = new Map(); // key => { ts: number }
