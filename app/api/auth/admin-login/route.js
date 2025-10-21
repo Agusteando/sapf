@@ -7,53 +7,93 @@ import { createOrUpdateUser } from "@/lib/users";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Validates Google ID token using Google tokeninfo endpoint, checks allowed domains/emails,
-// and issues a signed, HttpOnly session cookie upon success. Also persists/updates user row.
+// Helpers to improve debug visibility without leaking secrets
+function maskToken(tok = "") {
+  const s = String(tok || "");
+  if (!s) return "";
+  return `len:${s.length}:${s.slice(-10)}`; // last 10 chars only
+}
+function clientIp(request) {
+  const xf = request.headers.get("x-forwarded-for") || "";
+  const xr = request.headers.get("x-real-ip") || "";
+  const ip = (xf.split(",")[0] || xr || "anon").trim();
+  return ip || "anon";
+}
+function maybeDebugHeader(res, key, value) {
+  try {
+    if (process.env.AUTH_DEBUG_HEADERS === "1") {
+      res.headers.set(key, String(value));
+    }
+  } catch {}
+}
 
 export async function POST(request, context = { params: {} }) {
   const params = await context.params;
+  const ip = clientIp(request);
   try {
-    const { credential } = await request.json();
-    console.log("[api/auth/admin-login][POST] Received credential:", Boolean(credential));
+    const body = await request.json().catch(() => ({}));
+    const credential = body?.credential || "";
+    console.log("[api/auth/admin-login][POST] start", {
+      hasCredential: Boolean(credential),
+      credInfo: maskToken(credential),
+      ip
+    });
 
     if (!credential) {
-      return NextResponse.json({ error: "Falta token de Google." }, { status: 400 });
+      const res = NextResponse.json({ error: "Falta token de Google.", code: "MISSING_CREDENTIAL" }, { status: 400 });
+      maybeDebugHeader(res, "x-auth-step", "missing-credential");
+      return res;
     }
 
-    // Validate Google ID token using tokeninfo
-    const tokeninfoRes = await fetch(
-      "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(credential),
-      { method: "GET", cache: "no-store" }
-    );
+    let tokeninfoRes;
+    try {
+      const url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(credential);
+      tokeninfoRes = await fetch(url, { method: "GET", cache: "no-store" });
+    } catch (err) {
+      console.error("[api/auth/admin-login] tokeninfo fetch error:", err?.message || err);
+      const res = NextResponse.json({ error: "No se pudo verificar token (red).", code: "TOKENINFO_NETWORK" }, { status: 502 });
+      maybeDebugHeader(res, "x-auth-step", "tokeninfo-network");
+      return res;
+    }
 
     if (!tokeninfoRes.ok) {
-      const errText = await tokeninfoRes.text();
-      console.error("[api/auth/admin-login] tokeninfo error:", errText);
-      return NextResponse.json({ error: "Token de Google inválido." }, { status: 401 });
+      const errText = await tokeninfoRes.text().catch(() => "");
+      console.error("[api/auth/admin-login] tokeninfo not ok:", tokeninfoRes.status, errText.slice(0, 300));
+      const res = NextResponse.json({ error: "Token de Google inválido.", code: "TOKENINFO_INVALID", status: tokeninfoRes.status }, { status: 401 });
+      maybeDebugHeader(res, "x-auth-step", "tokeninfo-invalid");
+      return res;
     }
 
-    const tokeninfo = await tokeninfoRes.json();
-
-    // Expected audience (client id)
-    const audience =
-      process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GSI_CLIENT_ID || "";
+    const tokeninfo = await tokeninfoRes.json().catch(() => ({}));
+    const audience = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GSI_CLIENT_ID || "";
     if (!audience) {
       console.warn("[api/auth/admin-login] GOOGLE_CLIENT_ID/NEXT_PUBLIC_GSI_CLIENT_ID no configurado");
     }
 
-    const audOK = !audience || tokeninfo.aud === audience;
     const email = tokeninfo.email;
-    const emailVerified = tokeninfo.email_verified === "true" || tokeninfo.email_verified === true;
     const hd = tokeninfo.hd || (email && email.split("@")[1]) || "";
+    const audOK = !audience || tokeninfo.aud === audience;
+    const emailVerified = tokeninfo.email_verified === "true" || tokeninfo.email_verified === true;
+
+    console.log("[api/auth/admin-login] tokeninfo parsed:", {
+      aud: tokeninfo.aud,
+      audOK,
+      emailPresent: Boolean(email),
+      emailVerified,
+      hd
+    });
 
     if (!emailVerified || !email) {
-      return NextResponse.json({ error: "Email no verificado." }, { status: 401 });
+      const res = NextResponse.json({ error: "Email no verificado.", code: "EMAIL_NOT_VERIFIED" }, { status: 401 });
+      maybeDebugHeader(res, "x-auth-step", "email-not-verified");
+      return res;
     }
     if (!audOK) {
-      return NextResponse.json({ error: "Audiencia inválida." }, { status: 401 });
+      const res = NextResponse.json({ error: "Audiencia inválida.", code: "AUDIENCE_MISMATCH", aud: tokeninfo.aud, expected: audience }, { status: 401 });
+      maybeDebugHeader(res, "x-auth-step", "audience-mismatch");
+      return res;
     }
 
-    // Allow rules
     const allowedDomains = (process.env.AUTH_ALLOWED_DOMAINS || "")
       .split(",")
       .map((s) => s.trim().toLowerCase())
@@ -64,20 +104,21 @@ export async function POST(request, context = { params: {} }) {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
 
-    // If allow lists exist, enforce them
     let domainAllowed = true;
     let emailAllowed = true;
+    if (allowedDomains.length > 0) domainAllowed = allowedDomains.includes(String(hd || "").toLowerCase());
+    if (allowedEmails.length > 0) emailAllowed = allowedEmails.includes(String(email || "").toLowerCase());
 
-    if (allowedDomains.length > 0) {
-      domainAllowed = allowedDomains.includes(hd.toLowerCase());
-    }
-    if (allowedEmails.length > 0) {
-      emailAllowed = allowedEmails.includes(String(email || "").toLowerCase());
-    }
+    console.log("[api/auth/admin-login] allow-check:", {
+      domain: hd, allowedDomains, domainAllowed,
+      email, allowedEmails, emailAllowed
+    });
 
     if (!domainAllowed && !emailAllowed) {
-      console.warn("[api/auth/admin-login] Acceso denegado por dominio/email:", { email, hd });
-      return NextResponse.json({ error: "Acceso restringido a correo institucional." }, { status: 403 });
+      console.warn("[api/auth/admin-login] acceso denegado", { email, hd, ip });
+      const res = NextResponse.json({ error: "Acceso restringido a correo institucional.", code: "ACCESS_DENIED" }, { status: 403 });
+      maybeDebugHeader(res, "x-auth-step", "access-denied");
+      return res;
     }
 
     const user = {
@@ -86,25 +127,59 @@ export async function POST(request, context = { params: {} }) {
       picture: tokeninfo.picture || "",
     };
 
-    // Persist/Update user as admin
-    const pool = await getConnection();
-    const dbUser = await createOrUpdateUser(pool, {
-      email: user.email,
-      name: user.name,
-      picture: user.picture,
-      hd,
-      isAdmin: true
-    });
+    // Persist/Update user as admin (rol=1 if "rol" column exists)
+    let dbUser = null;
+    try {
+      const pool = await getConnection();
+      dbUser = await createOrUpdateUser(pool, {
+        email: user.email,
+        name: user.name,
+        picture: user.picture,
+        hd,
+        isAdmin: true
+      });
+    } catch (err) {
+      const code = err?.code || "USER_UPSERT_FAIL";
+      const expose = process.env.AUTH_EXPOSE_ERRORS === "1";
+      const payload = {
+        error: "No se pudo registrar usuario.",
+        code,
+        hint: err?.hint || undefined
+      };
+      if (expose && err?.ddl) payload.ddl = err.ddl;
+      console.error("[api/auth/admin-login] user upsert error:", code, err?.message || err);
+      const res = NextResponse.json(payload, { status: 500 });
+      maybeDebugHeader(res, "x-auth-step", "user-upsert-fail");
+      maybeDebugHeader(res, "x-users-error-code", code);
+      if (err?.hint) maybeDebugHeader(res, "x-users-hint", err.hint);
+      if (expose && err?.ddl) maybeDebugHeader(res, "x-users-ddl-available", "1");
+      return res;
+    }
 
-    const cookie = createSessionCookie({ user, maxAgeSeconds: 8 * 60 * 60 });
+    let cookie = "";
+    try {
+      cookie = createSessionCookie({ user, maxAgeSeconds: 8 * 60 * 60 });
+    } catch (err) {
+      console.error("[api/auth/admin-login] createSessionCookie error:", err?.message || err);
+      const res = NextResponse.json({ error: "No se pudo crear sesión.", code: "COOKIE_CREATE_FAIL" }, { status: 500 });
+      maybeDebugHeader(res, "x-auth-step", "cookie-fail");
+      return res;
+    }
+
     const res = NextResponse.json({ ok: true, user, dbUser });
     res.headers.append("Set-Cookie", cookie);
     res.headers.set("x-auth-issued", "true");
+    res.headers.set("x-auth-route", "admin-login");
     res.headers.set("x-user-upsert", "ok");
-    console.log("[api/auth/admin-login] Login OK:", user.email, "dbUserId:", dbUser?.id);
+    maybeDebugHeader(res, "x-auth-email", user.email);
+    maybeDebugHeader(res, "x-auth-domain", hd);
+    maybeDebugHeader(res, "x-auth-admin", "1");
+    console.log("[api/auth/admin-login] OK", { email: user.email, dbUserId: dbUser?.id, ip });
     return res;
   } catch (error) {
-    console.error("[api/auth/admin-login][POST] error:", error);
-    return NextResponse.json({ error: "Error de autenticación." }, { status: 500 });
+    console.error("[api/auth/admin-login][POST] error:", error?.message || error);
+    const res = NextResponse.json({ error: "Error de autenticación.", code: "GENERIC_AUTH_ERROR" }, { status: 500 });
+    maybeDebugHeader(res, "x-auth-step", "catch-all");
+    return res;
   }
 }

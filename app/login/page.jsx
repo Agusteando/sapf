@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
 import ToastViewport from "@/components/toast-viewport";
-import { toastError } from "@/lib/notify";
+import { toastError, toastInfo } from "@/lib/notify";
 
 const GSI_CLIENT_ID = process.env.NEXT_PUBLIC_GSI_CLIENT_ID;
 
@@ -21,17 +21,26 @@ export default function LoginPage() {
       fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ credential: response.credential }),
       })
         .then(async (res) => {
-          const data = await res.json();
+          const data = await res.json().catch(() => ({}));
           if (!res.ok) {
-            toastError(data.error || "Acceso denegado");
+            toastError(data?.error || "Acceso denegado");
+            console.debug("[login] auth failed", data);
             return;
           }
+          console.debug("[login] auth OK; redirecting to /");
           window.location.replace("/");
+          setTimeout(() => {
+            if (location.pathname.includes("/login")) {
+              toastInfo("Redirigiendo… si no avanza, haz clic en 'Volver' o recarga la página.");
+            }
+          }, 800);
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn("[login] auth network error", err?.message || err);
           toastError("Error de red");
         });
     }
@@ -53,7 +62,7 @@ export default function LoginPage() {
           text: "signin_with",
           size: "large",
           logo_alignment: "left",
-          width: 380,
+          width: 320,
           locale: "es",
         });
       }
@@ -135,6 +144,13 @@ export default function LoginPage() {
                 <ShieldCheck className="inline w-4 h-4 text-[#018B9C] mr-1" />
                 Acceso seguro con Google • Plataforma oficial SAPF
               </div>
+            </div>
+
+            {/* Back link for manual navigation if needed */}
+            <div className="mt-6 text-center">
+              <a href="/" className="text-[#004E66] underline">
+                Volver al inicio
+              </a>
             </div>
           </div>
         </div>
