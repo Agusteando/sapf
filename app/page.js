@@ -133,6 +133,7 @@ export default function ParentAttentionSystem() {
     };
   }, []);
 
+  // Campus options shown to users (PM is intentionally omitted; PMB/PMA will use PM for students behind the scenes)
   const campuses = useMemo(() => ([
     { value: "PMB", label: "Primaria Baja Metepec" },
     { value: "PMA", label: "Primaria Alta Metepec" },
@@ -418,7 +419,7 @@ export default function ParentAttentionSystem() {
     let qs = `campus=${encodeURIComponent(selectedCampus || "")}`;
     if (dashStatusFilter !== undefined && dashStatusFilter !== null) {
       qs += `&status=${encodeURIComponent(dashStatusFilter)}`;
-    }
+       }
     if (dashSelectedMonth) {
       qs += `&month=${encodeURIComponent(dashSelectedMonth)}`;
     } else if (dashSchoolYear) {
