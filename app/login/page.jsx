@@ -5,12 +5,13 @@ import { useEffect, useRef } from "react";
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
 import ToastViewport from "@/components/toast-viewport";
-import { toastError, toastInfo } from "@/lib/notify";
+import { toastError } from "@/lib/notify";
 
 const GSI_CLIENT_ID = process.env.NEXT_PUBLIC_GSI_CLIENT_ID;
 
 export default function LoginPage() {
   const gsiInitialized = useRef(false);
+  const redirectedRef = useRef(false);
 
   useEffect(() => {
     function handleCredentialResponse(response) {
@@ -18,6 +19,9 @@ export default function LoginPage() {
         toastError("No se recibió credencial de Google, intenta de nuevo.");
         return;
       }
+
+      console.log("[login] Starting authentication...");
+
       fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -25,22 +29,40 @@ export default function LoginPage() {
         body: JSON.stringify({ credential: response.credential }),
       })
         .then(async (res) => {
+          console.log("[login] Response status:", res.status);
+          console.log("[login] Response OK?:", res.ok);
+
           const data = await res.json().catch(() => ({}));
+          console.log("[login] Response data:", data);
+
           if (!res.ok) {
             toastError(data?.error || "Acceso denegado");
-            console.debug("[login] auth failed", data);
+            console.log("[login] auth failed", data);
             return;
           }
-          console.debug("[login] auth OK; redirecting to /");
-          window.location.replace("/");
+
+          console.log("[login] Auth successful!");
+          console.log("[login] Cookies after login (HttpOnly not shown):", document.cookie || "(empty)");
+
+          if (redirectedRef.current) {
+            console.log("[login] Already redirecting, skipping...");
+            return;
+          }
+          redirectedRef.current = true;
+          console.log("[login] Setting redirect flag and redirecting to /");
+
+          // Force a hard navigation with a slight delay to ensure Set-Cookie is applied
           setTimeout(() => {
-            if (location.pathname.includes("/login")) {
-              toastInfo("Redirigiendo… si no avanza, haz clic en 'Volver' o recarga la página.");
+            console.log("[login] EXECUTING REDIRECT NOW");
+            try {
+              window.location.href = "/";
+            } catch {
+              window.location.assign("/");
             }
-          }, 800);
+          }, 250);
         })
         .catch((err) => {
-          console.warn("[login] auth network error", err?.message || err);
+          console.error("[login] Network error:", err?.message || err);
           toastError("Error de red");
         });
     }
@@ -144,13 +166,6 @@ export default function LoginPage() {
                 <ShieldCheck className="inline w-4 h-4 text-[#018B9C] mr-1" />
                 Acceso seguro con Google • Plataforma oficial SAPF
               </div>
-            </div>
-
-            {/* Back link for manual navigation if needed */}
-            <div className="mt-6 text-center">
-              <a href="/" className="text-[#004E66] underline">
-                Volver al inicio
-              </a>
             </div>
           </div>
         </div>

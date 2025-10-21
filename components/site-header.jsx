@@ -24,14 +24,23 @@ export default function SiteHeader() {
   const loadProfile = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/profile", { cache: "no-store" });
+      console.debug("[SiteHeader] Loading profile...");
+      const res = await fetch("/api/profile", { cache: "no-store", credentials: "include" });
+      console.debug("[SiteHeader] Profile response status:", res.status);
       if (res.status === 401) {
+        console.debug("[SiteHeader] Not authenticated; header hidden.");
         setAuthed(false);
         setLoading(false);
         return;
       }
-      if (!res.ok) throw new Error("profile fetch failed");
+      if (!res.ok) {
+        console.warn("[SiteHeader] Profile fetch not ok:", res.status);
+        setAuthed(false);
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
+      console.debug("[SiteHeader] Profile loaded; user:", data?.user?.email || "(none)");
       setAuthed(true);
       setProfile(data);
       setCampusOptions(Array.isArray(data.campusOptions) ? data.campusOptions : []);
@@ -58,7 +67,12 @@ export default function SiteHeader() {
   }, []);
 
   useEffect(() => {
-    if (!hideOnLogin) loadProfile();
+    if (!hideOnLogin) {
+      console.log("[layout/SiteHeader] Not on login page, loading profile...");
+      loadProfile();
+    } else {
+      console.log("[layout/SiteHeader] On login page, skipping profile load");
+    }
   }, [hideOnLogin, loadProfile]);
 
   async function onCampusChange(next) {

@@ -51,10 +51,28 @@ export async function GET(request, context = { params: {} }) {
   const params = await context.params;
   try {
     const cookieHeader = request.headers.get("cookie") || "";
+
+    // Debug: received cookies and session presence
+    try {
+      console.log("[api/profile][GET] Received cookies:", cookieHeader ? cookieHeader.substring(0, 150) + "..." : "NONE");
+    } catch {}
+
     const cookies = parseCookie(cookieHeader);
     const sessionRaw = cookies[SESSION_COOKIE_NAME];
+
+    try {
+      console.log("[api/profile][GET] Session cookie present?", !!sessionRaw);
+      console.log("[api/profile][GET] Session cookie value:", sessionRaw ? String(sessionRaw).substring(0, 50) + "..." : "NONE");
+    } catch {}
+
     const session = verifySessionValue(sessionRaw);
+
+    try {
+      console.log("[api/profile][GET] Session verified?", !!session?.email);
+    } catch {}
+
     if (!session?.email) {
+      console.log("[api/profile][GET] No valid session, returning 401");
       return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
     }
 

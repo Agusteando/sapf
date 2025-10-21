@@ -161,6 +161,18 @@ export async function POST(request, context = { params: {} }) {
     maybeDebugHeader(res, "x-auth-email", user.email);
     maybeDebugHeader(res, "x-auth-domain", hd);
     maybeDebugHeader(res, "x-auth-admin", "0");
+
+    // Debug: log cookie being set and selected response headers
+    try {
+      console.log("[api/auth/login] Cookie being set:", cookie ? cookie.substring(0, 100) + "..." : "NONE");
+      console.log("[api/auth/login] Response headers:", {
+        setCookie: res.headers.get("set-cookie"),
+        xAuthIssued: res.headers.get("x-auth-issued"),
+      });
+    } catch (e) {
+      console.warn("[api/auth/login] header logging failed:", e?.message || e);
+    }
+
     console.log("[api/auth/login] OK", { email: user.email, dbUserId: dbUser?.id, ip });
     return res;
   } catch (error) {

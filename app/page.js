@@ -26,6 +26,18 @@ import { departmentOptions, combinedEmailLabel } from "@/lib/ui";
 import { toastError, toastSuccess, toastWarning, toastInfo } from "@/lib/notify";
 
 export default function ParentAttentionSystem() {
+  // Debug logging to trace navigation and cookie visibility
+  useEffect(() => {
+    try {
+      console.log("[app/page] Component mounted");
+      console.log("[app/page] Current pathname:", window.location.pathname);
+      console.log("[app/page] Current cookies (HttpOnly not shown):", document.cookie || "(empty)");
+    } catch {}
+    return () => {
+      console.log("[app/page] Component unmounting");
+    };
+  }, []);
+
   const [currentView, setCurrentView] = useState("dashboard");
   const [selectedCampus, setSelectedCampus] = useState("");
   const [tickets, setTickets] = useState([]);
