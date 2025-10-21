@@ -1,6 +1,8 @@
 
 import { NextResponse } from "next/server";
 import { createSessionCookie } from "@/lib/auth";
+import { getConnection } from "@/lib/db";
+import { createOrUpdateUser } from "@/lib/users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +33,7 @@ export async function POST(request, context = { params: {} }) {
     const email = tokeninfo.email;
     const emailVerified = tokeninfo.email_verified === "true" || tokeninfo.email_verified === true;
     const aud = tokeninfo.aud;
+    const hd = tokeninfo.hd || (email && email.split("@")[1]) || "";
 
     const expectedAud = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GSI_CLIENT_ID || "";
     if (expectedAud && aud !== expectedAud) {
@@ -65,11 +68,22 @@ export async function POST(request, context = { params: {} }) {
       picture: tokeninfo.picture || "",
     };
 
+    // Persist/Update user as non-admin by default
+    const pool = await getConnection();
+    const dbUser = await createOrUpdateUser(pool, {
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      hd,
+      isAdmin: false
+    });
+
     const cookie = createSessionCookie({ user, maxAgeSeconds: 8 * 60 * 60 });
-    const res = NextResponse.json({ ok: true, user });
+    const res = NextResponse.json({ ok: true, user, dbUser });
     res.headers.append("Set-Cookie", cookie);
     res.headers.set("x-auth-issued", "true");
-    console.log("[api/auth/login] login OK:", user.email);
+    res.headers.set("x-user-upsert", "ok");
+    console.log("[api/auth/login] login OK:", user.email, "dbUserId:", dbUser?.id);
     return res;
   } catch (error) {
     console.error("[api/auth/login][POST] error:", error);

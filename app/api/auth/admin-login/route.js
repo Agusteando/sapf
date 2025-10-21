@@ -1,12 +1,14 @@
 
 import { NextResponse } from "next/server";
 import { createSessionCookie } from "@/lib/auth";
+import { getConnection } from "@/lib/db";
+import { createOrUpdateUser } from "@/lib/users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Validates Google ID token using Google tokeninfo endpoint, checks allowed domains/emails,
-// and issues a signed, HttpOnly session cookie upon success.
+// and issues a signed, HttpOnly session cookie upon success. Also persists/updates user row.
 
 export async function POST(request, context = { params: {} }) {
   const params = await context.params;
@@ -70,7 +72,7 @@ export async function POST(request, context = { params: {} }) {
       domainAllowed = allowedDomains.includes(hd.toLowerCase());
     }
     if (allowedEmails.length > 0) {
-      emailAllowed = allowedEmails.includes(email.toLowerCase());
+      emailAllowed = allowedEmails.includes(String(email || "").toLowerCase());
     }
 
     if (!domainAllowed && !emailAllowed) {
@@ -84,11 +86,22 @@ export async function POST(request, context = { params: {} }) {
       picture: tokeninfo.picture || "",
     };
 
+    // Persist/Update user as admin
+    const pool = await getConnection();
+    const dbUser = await createOrUpdateUser(pool, {
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      hd,
+      isAdmin: true
+    });
+
     const cookie = createSessionCookie({ user, maxAgeSeconds: 8 * 60 * 60 });
-    const res = NextResponse.json({ ok: true, user });
+    const res = NextResponse.json({ ok: true, user, dbUser });
     res.headers.append("Set-Cookie", cookie);
     res.headers.set("x-auth-issued", "true");
-    console.log("[api/auth/admin-login] Login OK:", user.email);
+    res.headers.set("x-user-upsert", "ok");
+    console.log("[api/auth/admin-login] Login OK:", user.email, "dbUserId:", dbUser?.id);
     return res;
   } catch (error) {
     console.error("[api/auth/admin-login][POST] error:", error);
