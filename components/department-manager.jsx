@@ -1,133 +1,210 @@
 
 "use client";
 
-import { useState } from "react";
-import { Check, Edit2 } from "lucide-react";
-import { combinedEmailLabel } from "@/lib/ui";
+import { useMemo, useState } from "react";
+import { Pencil, Check, X, Search } from "lucide-react";
+
+function initialsOf(nameOrEmail) {
+  const s = String(nameOrEmail || "").trim();
+  if (!s) return "•";
+  const parts = s.split(/\s+/g).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  if (s.includes("@")) return s.slice(0, 2).toUpperCase();
+  return s.slice(0, 2).toUpperCase();
+}
+
+function combinedLabel(email, name = "") {
+  const e = String(email || "").trim();
+  const n = String(name || "").trim();
+  if (e && n) return `${n} <${e}>`;
+  return e || "";
+}
+
+function avatar({ photoUrl, fallbackLabel }) {
+  if (photoUrl) {
+    return <img src={photoUrl} alt="" className="h-8 w-8 rounded-full object-cover" loading="lazy" />;
+  }
+  return (
+    <div className="h-8 w-8 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center text-xs font-semibold">
+      {initialsOf(fallbackLabel)}
+    </div>
+  );
+}
 
 export default function DepartmentManager({
-  campusLabel,
-  departments,
-  institutionalNames = {},
+  campusLabel = "",
+  departments = {},
+  institutionalProfiles = {},
   editingDept,
   setEditingDept,
-  onUpdateDepartment
+  onUpdateDepartment,
 }) {
-  const [editData, setEditData] = useState({});
+  const [q, setQ] = useState("");
+
+  const items = useMemo(() => {
+    // Flatten grouped departments: one card per department_name
+    const out = [];
+    for (const [deptName, arr] of Object.entries(departments || {})) {
+      const rec = Array.isArray(arr) && arr.length > 0 ? arr[0] : { department_name: deptName, email: "", supervisor_email: "", campus: "" };
+      const email = String(rec.email || "").trim();
+      const supervisor = String(rec.supervisor_email || "").trim();
+
+      const emailKey = email.toLowerCase();
+      const supKey = supervisor.toLowerCase();
+
+      const emailName = rec.email_display_name || institutionalProfiles[emailKey]?.name || "";
+      const emailPhoto = rec.email_photo_url || institutionalProfiles[emailKey]?.photoUrl || "";
+
+      const supName = rec.supervisor_display_name || institutionalProfiles[supKey]?.name || "";
+      const supPhoto = rec.supervisor_photo_url || institutionalProfiles[supKey]?.photoUrl || "";
+
+      out.push({
+        department_name: deptName,
+        email,
+        emailName,
+        emailPhoto,
+        supervisor_email: supervisor,
+        supName,
+        supPhoto,
+        campus: rec.campus || "",
+      });
+    }
+
+    const term = q.trim().toLowerCase();
+    if (!term) return out.sort((a, b) => a.department_name.localeCompare(b.department_name, "es"));
+    return out
+      .filter((r) => {
+        const hay = `${r.department_name} ${r.email} ${r.emailName} ${r.supervisor_email} ${r.supName}`.toLowerCase();
+        return hay.includes(term);
+      })
+      .sort((a, b) => a.department_name.localeCompare(b.department_name, "es"));
+  }, [departments, institutionalProfiles, q]);
+
+  const [draft, setDraft] = useState({ email: "", supervisor_email: "" });
+
+  function onStartEdit(d) {
+    setEditingDept(d.department_name);
+    setDraft({ email: d.email || "", supervisor_email: d.supervisor_email || "" });
+  }
+  function onCancel() {
+    setEditingDept(null);
+    setDraft({ email: "", supervisor_email: "" });
+  }
+  async function onSave(name) {
+    if (!onUpdateDepartment) return;
+    await onUpdateDepartment(name, draft.email || "", draft.supervisor_email || "");
+  }
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-lg">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="font-title text-2xl text-[#004E66]">
-          Configuración de Departamentos — {campusLabel}
-        </h2>
+    <div className="w-full">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h2 className="font-title text-xl text-[#004E66]">Departamentos — {campusLabel}</h2>
+        <div className="relative w-full sm:w-72">
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar departamento, correo o nombre…"
+            className="w-full rounded-lg border border-[#cde6eb] bg-white px-3 py-2 pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
+          />
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+        </div>
       </div>
 
-      <div className="grid gap-4">
-        {Object.entries(departments).map(([deptName, deptData]) => {
-          const rec = deptData?.[0] || {};
-          const deptEmail = rec.email || "";
-          const supEmail = rec.supervisor_email || "";
-          const deptNameDisp = institutionalNames[deptEmail.toLowerCase?.() || ""] || rec.email_display_name || "";
-          const supNameDisp = institutionalNames[supEmail.toLowerCase?.() || ""] || rec.supervisor_display_name || "";
-          const deptCombined = combinedEmailLabel(deptEmail, deptNameDisp) || "—";
-          const supCombined = combinedEmailLabel(supEmail, supNameDisp) || "—";
-
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {items.map((d) => {
+          const isEditing = editingDept === d.department_name;
           return (
-            <div
-              key={deptName}
-              className="border border-gray-200 rounded-lg p-4 hover-soft transition-shadow"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="font-semibold text-lg mb-3 text-gray-800">
-                    {deptName}
-                  </div>
-                  {editingDept === deptName ? (
-                    <div className="grid gap-3">
-                      <div>
-                        <label className="text-sm text-gray-600 font-medium">
-                          Email del departamento
-                        </label>
-                        <input
-                          type="email"
-                          placeholder="correo@dominio.com"
-                          className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
-                          defaultValue={deptEmail}
-                          onChange={(e) =>
-                            setEditData({ ...editData, email: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm text-gray-600 font-medium">
-                          Email del supervisor
-                        </label>
-                        <input
-                          type="email"
-                          placeholder="supervisor@dominio.com"
-                          className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
-                          defaultValue={supEmail}
-                          onChange={(e) =>
-                            setEditData({
-                              ...editData,
-                              supervisor: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() =>
-                            onUpdateDepartment(
-                              deptName,
-                              editData.email || deptEmail,
-                              editData.supervisor || supEmail
-                            )
-                          }
-                          className="btn btn-brand"
-                        >
-                          <Check className="w-4 h-4" />
-                          Guardar
-                        </button>
-                        <button
-                          onClick={() => setEditingDept(null)}
-                          className="px-4 py-2 rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-700 space-y-2">
-                      <div className="flex items-start gap-2">
-                        <span className="font-medium min-w-[100px]">Departamento:</span>
-                        <span className={deptEmail ? "text-gray-900" : "text-gray-400"}>
-                          {deptCombined}
-                        </span>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <span className="font-medium min-w-[100px]">Supervisor:</span>
-                        <span className={supEmail ? "text-gray-900" : "text-gray-400"}>
-                          {supCombined}
-                        </span>
-                      </div>
-                    </div>
-                  )}
+            <div key={d.department_name} className="rounded-lg border border-[#cde6eb] bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-base font-semibold text-[#004E66]">{d.department_name}</div>
+                  <div className="mt-1 text-xs text-gray-500">Plantel: {d.campus || "—"}</div>
                 </div>
-                {!editingDept && (
+                {!isEditing ? (
                   <button
-                    onClick={() => setEditingDept(deptName)}
-                    className="ml-4 p-2 text-[#004E66] hover:bg-[#E6F3F6] rounded transition-colors"
-                    aria-label="Editar departamento"
+                    onClick={() => onStartEdit(d)}
+                    className="inline-flex items-center gap-1 rounded-md bg-[#E6F3F6] text-[#004E66] px-3 py-1 text-xs font-medium hover:bg-[#E6F3F6]/80"
                   >
-                    <Edit2 className="w-5 h-5" />
+                    <Pencil className="h-4 w-4" />
+                    Editar
                   </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onSave(d.department_name)}
+                      className="inline-flex items-center gap-1 rounded-md bg-[#6DA544] text-white px-3 py-1 text-xs font-medium hover:bg-[#5ea23c]"
+                      aria-label="Guardar"
+                    >
+                      <Check className="h-4 w-4" />
+                      Guardar
+                    </button>
+                    <button
+                      onClick={onCancel}
+                      className="inline-flex items-center gap-1 rounded-md bg-[#ffe9e3] text-[#7a200f] px-3 py-1 text-xs font-medium hover:bg-[#ffd3c8]"
+                      aria-label="Cancelar"
+                    >
+                      <X className="h-4 w-4" />
+                      Cancelar
+                    </button>
+                  </div>
                 )}
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center gap-3">
+                  {avatar({
+                    photoUrl: d.emailPhoto,
+                    fallbackLabel: d.emailName || d.email || d.department_name,
+                  })}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs uppercase tracking-wide text-gray-500">Correo principal</div>
+                    {!isEditing ? (
+                      <div className="text-sm text-gray-800 truncate">{combinedLabel(d.email, d.emailName) || "—"}</div>
+                    ) : (
+                      <input
+                        type="email"
+                        value={draft.email}
+                        onChange={(e) => setDraft((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="correo@institucional"
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {avatar({
+                    photoUrl: d.supPhoto,
+                    fallbackLabel: d.supName || d.supervisor_email || d.department_name,
+                  })}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs uppercase tracking-wide text-gray-500">Supervisor</div>
+                    {!isEditing ? (
+                      <div className="text-sm text-gray-800 truncate">{combinedLabel(d.supervisor_email, d.supName) || "—"}</div>
+                    ) : (
+                      <input
+                        type="email"
+                        value={draft.supervisor_email}
+                        onChange={(e) => setDraft((p) => ({ ...p, supervisor_email: e.target.value }))}
+                        placeholder="supervisor@institucional"
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           );
         })}
+
+        {items.length === 0 && (
+          <div className="col-span-full">
+            <div className="rounded-lg border border-dashed border-[#cde6eb] bg-white p-6 text-center text-sm text-gray-600">
+              No se encontraron departamentos que coincidan con tu búsqueda.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

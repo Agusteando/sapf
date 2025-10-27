@@ -1,125 +1,134 @@
 
-// components/searchable-select.jsx
-
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
-import { Search, ChevronDown, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronsUpDown, Check, Search, X } from "lucide-react";
 
-export default function SearchableSelect({ 
-  options = [], 
-  value, 
-  onChange, 
-  placeholder = "Seleccionar...",
+export default function SearchableSelect({
+  options = [],
+  value = "",
+  onChange,
+  placeholder = "Seleccionar…",
+  getOptionLabel = (o) => o?.label ?? "",
+  getOptionValue = (o) => o?.value ?? "",
   renderOption,
-  getOptionLabel,
-  getOptionValue,
-  className = ""
 }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const containerRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
 
-  // Default functions if not provided
-  const defaultGetLabel = (opt) => opt?.label || String(opt || "");
-  const defaultGetValue = (opt) => opt?.value || String(opt || "");
-  const defaultRender = (opt) => defaultGetLabel(opt);
+  const map = useMemo(() => {
+    const m = new Map();
+    for (const o of options) {
+      m.set(getOptionValue(o), o);
+    }
+    return m;
+  }, [options, getOptionValue]);
 
-  const labelFn = getOptionLabel || defaultGetLabel;
-  const valueFn = getOptionValue || defaultGetValue;
-  const renderFn = renderOption || defaultRender;
+  const current = map.get(value);
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const arr = options;
+    if (!term) return arr.slice(0, 50);
+    return arr
+      .filter((o) => {
+        const hay = `${getOptionLabel(o)} ${o?.combined || ""} ${o?.email || ""}`.toLowerCase();
+        return hay.includes(term);
+      })
+      .slice(0, 50);
+  }, [q, options, getOptionLabel]);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (containerRef.current && !containerRef.current.contains(event.target)) {
-        setIsOpen(false);
-        setSearch("");
+    function onDocClick(ev) {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(ev.target)) {
+        setOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  // Filter options based on search
-  const filteredOptions = options.filter((opt) => {
-    if (!search) return true;
-    const label = labelFn(opt).toLowerCase();
-    return label.includes(search.toLowerCase());
-  });
-
-  // Get selected option display
-  const selectedOption = options.find((opt) => valueFn(opt) === value);
-  const selectedLabel = selectedOption ? labelFn(selectedOption) : placeholder;
-
-  const handleSelect = (option) => {
-    onChange?.(valueFn(option));
-    setIsOpen(false);
-    setSearch("");
-  };
+  function select(val) {
+    onChange && onChange(val);
+    setOpen(false);
+    setQ("");
+  }
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      {/* Trigger button */}
+    <div className="relative" ref={boxRef}>
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between gap-2 p-3 border border-gray-300 rounded-lg bg-white hover:bg-[#E8E3D3]/40 focus:outline-none focus:ring-2 focus:ring-[#018B9C] transition-colors"
+        onClick={() => {
+          setOpen((v) => !v);
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-gray-50"
       >
-        <span className={`truncate ${!selectedOption ? "text-gray-500" : "text-gray-900"}`}>
-          {selectedLabel}
+        <span className="truncate">
+          {current ? getOptionLabel(current) : <span className="text-gray-500">{placeholder}</span>}
         </span>
-        <ChevronDown className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronsUpDown className="ml-2 h-4 w-4 text-gray-500" />
       </button>
 
-      {/* Dropdown */}
-      {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-hidden">
-          {/* Search input */}
-          <div className="p-2 border-b border-gray-200 sticky top-0 bg-white">
-            <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-[#E8E3D3]/30">
-              <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar..."
-                className="flex-1 bg-transparent outline-none text-sm"
-                autoFocus
-              />
-            </div>
-          </div>
-
-          {/* Options list */}
-          <div className="overflow-y-auto max-h-64">
-            {filteredOptions.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-gray-500 text-center">
-                No se encontraron resultados
-              </div>
-            ) : (
-              filteredOptions.map((option, idx) => {
-                const optValue = valueFn(option);
-                const isSelected = optValue === value;
-                return (
-                  <button
-                    key={`${optValue}-${idx}`}
-                    type="button"
-                    onClick={() => handleSelect(option)}
-                    className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-[#E8E3D3]/40 transition-colors ${
-                      isSelected ? "bg-[#E6F3F6] text-[#004E66]" : "text-gray-900"
-                    }`}
-                  >
-                    <span className="flex-1 text-sm">
-                      {renderFn(option)}
-                    </span>
-                    {isSelected && (
-                      <Check className="w-4 h-4 text-[#018B9C] flex-shrink-0" />
-                    )}
-                  </button>
-                );
-              })
+      {open && (
+        <div className="absolute z-20 mt-2 w-full rounded-lg border border-[#cde6eb] bg-white shadow-lg">
+          <div className="flex items-center gap-2 border-b border-gray-100 px-2 py-2">
+            <Search className="h-4 w-4 text-gray-500" />
+            <input
+              ref={inputRef}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar…"
+              className="flex-1 bg-transparent text-sm focus:outline-none"
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => setQ("")}
+                className="rounded-md p-1 text-gray-500 hover:bg-gray-100"
+                aria-label="Limpiar"
+              >
+                <X className="h-4 w-4" />
+              </button>
             )}
           </div>
+          <ul className="max-h-72 overflow-auto divide-y divide-gray-100">
+            {filtered.map((opt) => {
+              const val = getOptionValue(opt);
+              const isSel = val === value;
+              return (
+                <li key={val}>
+                  <button
+                    type="button"
+                    onClick={() => select(val)}
+                    className={`w-full flex items-center gap-3 px-3 py-2 hover:bg-[#E6F3F6] ${isSel ? "bg-[#E6F3F6]" : ""}`}
+                  >
+                    {opt?.photoUrl ? (
+                      <img src={opt.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover" loading="lazy" />
+                    ) : null}
+                    <div className="min-w-0 text-left">
+                      {renderOption ? (
+                        renderOption(opt)
+                      ) : (
+                        <>
+                          <div className="text-sm text-gray-900 truncate">{getOptionLabel(opt)}</div>
+                          {opt?.combined ? (
+                            <div className="text-xs text-gray-500 truncate">{opt.combined}</div>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                    {isSel ? <Check className="ml-auto h-4 w-4 text-[#004E66]" /> : null}
+                  </button>
+                </li>
+              );
+            })}
+            {filtered.length === 0 && (
+              <li className="px-3 py-3 text-sm text-gray-500">Sin resultados</li>
+            )}
+          </ul>
         </div>
       )}
     </div>

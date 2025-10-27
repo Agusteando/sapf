@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 import { wrapCache } from "@/lib/cache";
-import { getDisplayNames } from "@/lib/googleDirectory";
+import { getDisplayProfiles } from "@/lib/googleDirectory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ function isInstitutional(email, allowedDomains) {
   const m = String(email || "").toLowerCase().match(/^[^@]+@([^@]+)$/);
   const d = m ? m[1] : "";
   if (!d) return false;
-  if (allowedDomains.length === 0) return true; // if not specified, consider all as institutional
+  if (allowedDomains.length === 0) return true;
   return allowedDomains.includes(d);
 }
 
@@ -39,24 +39,32 @@ export async function GET(request, context = { params: {} }) {
     const unique = Array.from(new Set(rawEmails)).filter(Boolean);
 
     const allowedDomains = splitDomains(process.env.INTERNAL_EMAIL_DOMAINS || process.env.AUTH_ALLOWED_DOMAINS || "");
-
     const institutional = unique.filter((e) => isInstitutional(e, allowedDomains));
 
-    const key = "gdir:pre:names";
+    const key = "gdir:pre:profiles";
     const ttl = 6 * 60 * 60 * 1000; // 6 hours
 
-    const names = await wrapCache(key, ttl, async () => {
-      console.log("[api/directory/names] resolving display names for", institutional.length, "emails");
-      const map = await getDisplayNames(institutional);
-      return map;
+    const profiles = await wrapCache(key, ttl, async () => {
+      console.log("[api/directory/names] resolving profiles for", institutional.length, "emails");
+      return await getDisplayProfiles(institutional);
     });
+
+    // Backward compatibility (names map), plus photos and combined profiles
+    const names = {};
+    const photos = {};
+    for (const [email, prof] of Object.entries(profiles || {})) {
+      names[email] = prof?.name || "";
+      photos[email] = prof?.photoUrl || "";
+    }
 
     const res = NextResponse.json({
       ok: true,
-      count: Object.keys(names || {}).length,
+      count: Object.keys(profiles || {}).length,
       domainsUsed: allowedDomains,
       generatedAt: new Date().toISOString(),
-      names: names || {},
+      names,
+      photos,
+      profiles: profiles || {},
     });
     res.headers.set("Cache-Control", "no-store");
     return res;

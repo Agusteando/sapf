@@ -7,8 +7,6 @@ import {
   Save,
   FileText,
   TrendingUp,
-  Lock,
-  Pin,
   Stethoscope,
   Loader2
 } from "lucide-react";
@@ -26,7 +24,6 @@ import { departmentOptions, combinedEmailLabel } from "@/lib/ui";
 import { toastError, toastSuccess, toastWarning, toastInfo } from "@/lib/notify";
 
 export default function ParentAttentionSystem() {
-  // Debug logging to trace navigation and cookie visibility
   useEffect(() => {
     try {
       console.log("[app/page] Component mounted");
@@ -87,7 +84,16 @@ export default function ParentAttentionSystem() {
   });
 
   const [duplicate, setDuplicate] = useState(null);
-  const [institutionalNames, setInstitutionalNames] = useState({});
+
+  // Profiles include name and photoUrl. We derive names for bw-compat with older helpers.
+  const [institutionalProfiles, setInstitutionalProfiles] = useState({});
+  const institutionalNames = useMemo(() => {
+    const map = {};
+    for (const [email, prof] of Object.entries(institutionalProfiles || {})) {
+      map[email] = prof?.name || "";
+    }
+    return map;
+  }, [institutionalProfiles]);
 
   const [dashStatusFilter, setDashStatusFilter] = useState("0");
   const [dashSchoolYear, setDashSchoolYear] = useState("");
@@ -116,7 +122,6 @@ export default function ParentAttentionSystem() {
           selectedDepartment: prev.selectedDepartment || prefDept || "",
         }));
       } catch {
-        // fallback
         setSelectedCampus((c) => c || "PMB");
       }
     })();
@@ -133,7 +138,6 @@ export default function ParentAttentionSystem() {
     };
   }, []);
 
-  // Campus options shown to users (PM is intentionally omitted; PMB/PMA will use PM for students behind the scenes)
   const campuses = useMemo(() => ([
     { value: "PMB", label: "Primaria Baja Metepec" },
     { value: "PMA", label: "Primaria Alta Metepec" },
@@ -161,11 +165,12 @@ export default function ParentAttentionSystem() {
     const e = String(email || "").trim();
     if (!e) return "";
     const lower = e.toLowerCase();
-    const name = String(institutionalNames[lower] || fallbackName || "").trim();
+    const name = String(institutionalProfiles[lower]?.name || fallbackName || "").trim();
     if (e && name) return `${name} <${e}>`;
     return e;
-  }, [institutionalNames]);
+  }, [institutionalProfiles]);
 
+  // Fetch Workspace precomputed profiles (names + photos)
   useEffect(() => {
     let mounted = true;
     trackAsync(async () => {
@@ -173,15 +178,22 @@ export default function ParentAttentionSystem() {
         const res = await fetch("/api/directory/names", { cache: "no-store" });
         if (!mounted) return;
         if (!res.ok) {
-          console.warn("[app/page] failed to fetch precomputed names", res.status);
+          console.warn("[app/page] failed to fetch precomputed profiles", res.status);
           return;
         }
         const data = await res.json();
-        if (data?.ok && data?.names && typeof data.names === "object") {
-          setInstitutionalNames(data.names);
+        if (data?.ok && data?.profiles && typeof data.profiles === "object") {
+          setInstitutionalProfiles(data.profiles);
+        } else if (data?.names && typeof data.names === "object") {
+          // Backward-only names (no photos)
+          const fallback = {};
+          for (const [email, name] of Object.entries(data.names)) {
+            fallback[email] = { name, photoUrl: data.photos?.[email] || "" };
+          }
+          setInstitutionalProfiles(fallback);
         }
       } catch (e) {
-        console.warn("[app/page] error fetching precomputed names", e?.message || e);
+        console.warn("[app/page] error fetching precomputed profiles", e?.message || e);
       }
     });
     return () => { mounted = false; };
@@ -344,13 +356,17 @@ export default function ParentAttentionSystem() {
       for (const r of arr) {
         if (r?.email) {
           const e = String(r.email).toLowerCase();
-          const name = r.email_display_name || institutionalNames[e] || "";
-          list.push({ email: r.email, name });
+          const prof = institutionalProfiles[e] || {};
+          const name = r.email_display_name || prof.name || "";
+          const photoUrl = r.email_photo_url || prof.photoUrl || "";
+          list.push({ email: r.email, name, photoUrl });
         }
         if (r?.supervisor_email) {
           const e2 = String(r.supervisor_email).toLowerCase();
-          const name2 = r.supervisor_display_name || institutionalNames[e2] || "";
-          list.push({ email: r.supervisor_email, name: name2 });
+          const prof2 = institutionalProfiles[e2] || {};
+          const name2 = r.supervisor_display_name || prof2.name || "";
+          const photoUrl2 = r.supervisor_photo_url || prof2.photoUrl || "";
+          list.push({ email: r.supervisor_email, name: name2, photoUrl: photoUrl2 });
         }
       }
     }
@@ -360,39 +376,28 @@ export default function ParentAttentionSystem() {
       if (!map.has(key)) map.set(key, item);
     }
     return Array.from(map.values());
-  }, [departments, institutionalNames]);
+  }, [departments, institutionalProfiles]);
 
-  const defaultMonthForSchoolYear = useCallback((sy) => {
-    try {
-      const [startYearStr, endYearStr] = String(sy || "").split("-");
+  useEffect(() => {
+    if (!dashSchoolYear) return;
+    setDashSelectedMonth((prev) => {
+      if (prev) return prev;
+      const now = new Date();
+      const [startYearStr, endYearStr] = String(dashSchoolYear || "").split("-");
       const startYear = parseInt(startYearStr, 10);
       const endYear = parseInt(endYearStr, 10);
-      if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return "";
-
-      const now = new Date();
       const nowY = now.getFullYear();
       const nowM = now.getMonth();
       const inFirstSpan = nowY === startYear && nowM >= 7;
       const inSecondSpan = nowY === endYear && nowM <= 6;
-
       if (inFirstSpan || inSecondSpan) {
         const yyyy = inFirstSpan ? startYear : endYear;
         const mm = String(nowM + 1).padStart(2, "0");
         return `${yyyy}-${mm}`;
       }
       return `${startYear}-08`;
-    } catch {
-      return "";
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!dashSchoolYear) return;
-    setDashSelectedMonth((prev) => {
-      if (prev) return prev;
-      return defaultMonthForSchoolYear(dashSchoolYear);
     });
-  }, [dashSchoolYear, defaultMonthForSchoolYear]);
+  }, [dashSchoolYear]);
 
   const monthsForSchoolYear = useMemo(() => {
     if (!dashSchoolYear) return [];
@@ -819,13 +824,16 @@ export default function ParentAttentionSystem() {
     return fallbackDepartmentOptions;
   }, [departments]);
 
-  const canalizarOptions = useMemo(() => departmentOptions(departments, institutionalNames), [departments, institutionalNames]);
+  const canalizarOptions = useMemo(
+    () => departmentOptions(departments, institutionalProfiles),
+    [departments, institutionalProfiles]
+  );
 
   const canalizadoRec = departments[formData.targetDepartment]?.[0] || {};
   const canalizadoEmail = canalizadoRec.email || "";
-  const canalizadoName = institutionalNames[canalizadoEmail?.toLowerCase?.()] || canalizadoRec.email_display_name || "";
+  const canalizadoName = institutionalProfiles[canalizadoEmail?.toLowerCase?.()]?.name || canalizadoRec.email_display_name || "";
   const canalizadoSup = canalizadoRec.supervisor_email || "";
-  const canalizadoSupName = institutionalNames[canalizadoSup?.toLowerCase?.()] || canalizadoRec.supervisor_display_name || "";
+  const canalizadoSupName = institutionalProfiles[canalizadoSup?.toLowerCase?.()]?.name || canalizadoRec.supervisor_display_name || "";
   const canalizadoCombined = combinedEmailLabel(canalizadoEmail, canalizadoName) || "—";
   const canalizadoSupCombined = combinedEmailLabel(canalizadoSup, canalizadoSupName) || "—";
 
@@ -834,7 +842,6 @@ export default function ParentAttentionSystem() {
       <TopActivityBar active={activeOps > 0} />
 
       <main className="max-w-screen-xl mx-auto py-6 px-4">
-        {/* Route tabs */}
         <div className="flex flex-wrap gap-2 pb-4">
           <button
             onClick={() => setCurrentView("dashboard")}
@@ -1082,7 +1089,7 @@ export default function ParentAttentionSystem() {
                 <label className="text-sm font-semibold text-gray-700">Canalizar a</label>
                 <SearchableSelect
                   options={[
-                    { value: "", label: "Sin canalización", email: "", displayName: "", combined: "" },
+                    { value: "", label: "Sin canalización", email: "", displayName: "", combined: "", photoUrl: "" },
                     ...canalizarOptions
                   ]}
                   value={formData.targetDepartment}
@@ -1168,7 +1175,7 @@ export default function ParentAttentionSystem() {
           <DepartmentManager
             campusLabel={campuses.find((c) => c.value === selectedCampus)?.label}
             departments={departments}
-            institutionalNames={institutionalNames}
+            institutionalProfiles={institutionalProfiles}
             editingDept={editingDept}
             setEditingDept={setEditingDept}
             onUpdateDepartment={updateDepartment}
