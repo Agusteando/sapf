@@ -6,6 +6,25 @@ import { getDisplayProfiles } from "@/lib/googleDirectory";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function splitDomains(envVal) {
+  return String(envVal || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function domainOf(email) {
+  const m = String(email || "").toLowerCase().match(/^[^@]+@([^@]+)$/);
+  return m ? m[1] : "";
+}
+
+function ensureNombrePrefix(nameLike) {
+  const raw = String(nameLike || "").trim();
+  if (!raw) return "";
+  // Avoid double prefix
+  return /^nombre\s*:/i.test(raw) ? raw : `Nombre: ${raw}`;
+}
+
 export async function GET(request, context = { params: {} }) {
   const params = await context.params;
   try {
@@ -41,30 +60,56 @@ export async function GET(request, context = { params: {} }) {
     }
     const profiles = await getDisplayProfiles(emails);
 
-    // Build enriched response using the exact Directory fullName
+    // Load allowed domains to determine "institutional" emails
+    const allowedDomains = splitDomains(process.env.INTERNAL_EMAIL_DOMAINS || process.env.AUTH_ALLOWED_DOMAINS || "");
+    const isInstitutional = (email) => {
+      const d = domainOf(email);
+      if (!d) return false;
+      // If a list is configured, enforce membership; otherwise, treat as institutional to keep UX consistent.
+      return allowedDomains.length === 0 ? true : allowedDomains.includes(d);
+    };
+
+    // Build enriched response using Directory user's name.fullName (when available), prefixed with "Nombre: "
     const enriched = list.map((r) => {
       const email = r.email ? String(r.email).trim() : "";
       const sup = r.supervisor_email ? String(r.supervisor_email).trim() : "";
       const emailKey = email.toLowerCase();
       const supKey = sup.toLowerCase();
 
-      const fullName = profiles[emailKey]?.name || ""; // Directory fullName
-      const supFullName = profiles[supKey]?.name || "";
+      // Prefer user.name.fullName if getDisplayProfiles provided it (as fullName), else fallback to name
+      const fullNameRaw = profiles[emailKey]?.fullName || profiles[emailKey]?.name || "";
+      const supFullNameRaw = profiles[supKey]?.fullName || profiles[supKey]?.name || "";
+
+      const nameDisplay = isInstitutional(email) ? ensureNombrePrefix(fullNameRaw) : (fullNameRaw ? ensureNombrePrefix(fullNameRaw) : "");
+      const supNameDisplay = isInstitutional(sup) ? ensureNombrePrefix(supFullNameRaw) : (supFullNameRaw ? ensureNombrePrefix(supFullNameRaw) : "");
+
       const photo = profiles[emailKey]?.photoUrl || "";
       const supPhoto = profiles[supKey]?.photoUrl || "";
 
+      const emailCombined = nameDisplay && email ? `${nameDisplay} <${email}>` : email || "";
+      const supCombined = supNameDisplay && sup ? `${supNameDisplay} <${sup}>` : sup || "";
+
       return {
         ...r,
-        email_display_name: fullName, // ensure fullName is forwarded
-        supervisor_display_name: supFullName,
+        email_display_name: nameDisplay, // always prefixed "Nombre: ..." when available
+        supervisor_display_name: supNameDisplay,
         email_photo_url: photo,
         supervisor_photo_url: supPhoto,
-        email_combined_label: fullName && email ? `${fullName} <${email}>` : email,
-        supervisor_combined_label: supFullName && sup ? `${supFullName} <${sup}>` : sup,
+        email_combined_label: emailCombined,
+        supervisor_combined_label: supCombined,
       };
     });
 
-    console.log("[api/departments][GET] rows enriched:", enriched?.length ?? 0);
+    console.log("[api/departments][GET] rows enriched:", enriched?.length ?? 0, {
+      allowedDomains,
+      sample: enriched.slice(0, 2).map((e) => ({
+        dep: e.department_name,
+        email: e.email,
+        email_display_name: e.email_display_name,
+        supervisor_email: e.supervisor_email,
+        supervisor_display_name: e.supervisor_display_name
+      }))
+    });
     return NextResponse.json(enriched);
   } catch (error) {
     console.error("[api/departments][GET] error:", error);
