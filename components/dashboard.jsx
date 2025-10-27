@@ -1,9 +1,15 @@
 
 "use client";
 
-import { Download, FileText, Loader2, Lock, Pin, TrendingUp } from "lucide-react";
-import TicketCard from "@/components/ticket-card";
+import React from "react";
+import { Loader2, BarChart3, Filter, Calendar, Users } from "lucide-react";
+import TicketCard from "./ticket-card";
 
+/**
+ * Dashboard
+ * Displays KPI cards, filters, and a list of tickets (list form). For each ticket, it forwards
+ * institutionalProfiles to TicketCard so avatars and display names render correctly.
+ */
 export default function Dashboard({
   kpi,
   kpiLoading,
@@ -23,202 +29,160 @@ export default function Dashboard({
   distLoading,
   lastLoadedAt,
   loadError,
-  onOpenFollowup
+  onOpenFollowup,
+  institutionalProfiles = {},
 }) {
-  const filteredTickets = tickets;
+  const k = kpi || { total: 0, abiertos: 0, cerrados: 0, quejas: 0, avg_resolucion_horas: null };
 
   return (
-    <div className="p-6">
-      <h1 className="font-title text-3xl text-center text-[#004E66] mb-6 tracking-tight">
-        Mapa de Seguimiento de Fichas
-      </h1>
+    <div className="flex flex-col gap-6">
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="bg-white rounded-lg shadow p-4 flex flex-col">
+          <div className="text-xs text-gray-500 flex items-center gap-2">
+            <BarChart3 className="w-4 h-4" /> Total
+          </div>
+          <div className="text-2xl font-semibold text-[#004E66]">{k.total}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4 flex flex-col">
+          <div className="text-xs text-gray-500">Abiertos</div>
+          <div className="text-2xl font-semibold text-[#E94E1B]">{k.abiertos}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4 flex flex-col">
+          <div className="text-xs text-gray-500">Cerrados</div>
+          <div className="text-2xl font-semibold text-[#356635]">{k.cerrados}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4 flex flex-col">
+          <div className="text-xs text-gray-500">Quejas</div>
+          <div className="text-2xl font-semibold text-[#7a4a05]">{k.quejas}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4 flex flex-col">
+          <div className="text-xs text-gray-500">Prom. hrs. resolución</div>
+          <div className="text-2xl font-semibold text-[#018B9C]">
+            {k.avg_resolucion_horas !== null ? Math.round(k.avg_resolucion_horas) : "—"}
+          </div>
+        </div>
+      </section>
 
-      <div className="bg-white p-6 rounded-lg shadow-lg mb-6">
-        <div className="flex flex-col lg:flex-row lg:flex-wrap gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <label className="font-semibold text-gray-700">Ciclo Escolar:</label>
+      <section className="bg-white rounded-lg shadow p-4 flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Filter className="w-5 h-5 text-[#004E66]" />
             <select
-              className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
-              value={dashSchoolYear}
-              onChange={(e) => {
-                setDashSchoolYear(e.target.value);
-                setDashSelectedMonth("");
-              }}
+              className="px-3 py-2 border rounded-lg text-sm"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter?.(e.target.value)}
             >
-              {schoolYears.map((year) => (
-                <option key={year} value={year}>
-                  {year}
+              <option value="">Todos</option>
+              <option value="0">Abierto</option>
+              <option value="1">Cerrado</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-[#004E66]" />
+            <select
+              className="px-3 py-2 border rounded-lg text-sm"
+              value={dashSchoolYear || ""}
+              onChange={(e) => setDashSchoolYear?.(e.target.value)}
+            >
+              {(schoolYears || []).map((sy) => (
+                <option key={sy} value={sy}>
+                  {sy}
                 </option>
               ))}
             </select>
           </div>
 
-          <div className="flex items-center gap-3">
-            <label className="font-semibold text-gray-700">Mes:</label>
+          <div className="flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-[#004E66]" />
             <select
-              className="p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#018B9C]"
-              value={dashSelectedMonth}
-              onChange={(e) => setDashSelectedMonth(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm"
+              value={dashSelectedMonth || ""}
+              onChange={(e) => setDashSelectedMonth?.(e.target.value)}
             >
-              {monthsForSchoolYear.map((month) => (
-                <option key={month.value} value={month.value}>
-                  {month.label}
+              <option value="">Todo el ciclo</option>
+              {(monthsForSchoolYear || []).map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
                 </option>
               ))}
             </select>
           </div>
+
+          <button
+            onClick={onExport}
+            className="ml-auto btn btn-strong"
+          >
+            Exportar
+          </button>
+
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={!!showStats}
+              onChange={(e) => setShowStats?.(e.target.checked)}
+            />
+            Ver distribución
+          </label>
         </div>
 
-        <div className="flex flex-col lg:flex-row lg:justify-between items-stretch gap-4">
-          <div className="flex gap-4">
-            <label
-              className={`flex items-center gap-2 cursor-pointer px-4 py-2 border-2 rounded-lg transition-colors ${
-                statusFilter === "0"
-                  ? "border-[#E94E1B] bg-[#ffe9e3]"
-                  : "border-gray-300 hover:bg-[#E8E3D3]/40"
-              }`}
-            >
-              <input
-                type="radio"
-                checked={statusFilter === "0"}
-                onChange={() => setStatusFilter("0")}
-                className="text-[#E94E1B]"
-              />
-              <Pin className="w-5 h-5 text-[#E94E1B]" />
-              <span className="font-medium">
-                Abiertos ({filteredTickets.length})
-              </span>
-            </label>
-            <label
-              className={`flex items-center gap-2 cursor-pointer px-4 py-2 border-2 rounded-lg transition-colors ${
-                statusFilter === "1"
-                  ? "border-[#6DA544] bg-[#eaf3e6]"
-                  : "border-gray-300 hover:bg-[#E8E3D3]/40"
-              }`}
-            >
-              <input
-                type="radio"
-                checked={statusFilter === "1"}
-                onChange={() => setStatusFilter("1")}
-                className="text-[#6DA544]"
-              />
-              <Lock className="w-5 h-5 text-[#6DA544]" />
-              <span className="font-medium">Cerrados</span>
-            </label>
+        {loadError ? (
+          <div className="text-[#7a200f] bg-[#ffe9e3] border border-[#ffd3c8] rounded p-3 text-sm">
+            {loadError}
           </div>
+        ) : null}
 
-          <div className="flex gap-2">
-            <button
-              onClick={onExport}
-              className="btn btn-accent shadow"
-            >
-              <Download className="w-5 h-5" />
-              Exportar Excel
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 p-3 bg-[#E6F3F6] border border-[#cde6eb] rounded-lg text-sm text-[#004E66]">
-          <span className="font-semibold">Filtros:</span>
-          {dashSelectedMonth
-            ? ` Mes: ${monthsForSchoolYear.find((m) => m.value === dashSelectedMonth)?.label}`
-            : ` Ciclo: ${dashSchoolYear}`}
-          {lastLoadedAt && (
-            <span className="ml-3">
-              Última actualización: {lastLoadedAt.toLocaleString("es-MX")}
+        <div className="text-xs text-gray-500">
+          {kpiLoading ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Actualizando…
             </span>
-          )}
+          ) : lastLoadedAt ? (
+            <>Actualizado: {new Date(lastLoadedAt).toLocaleString("es-MX")}</>
+          ) : null}
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#F7931E" }}>
-          <div className="text-sm text-gray-600 flex items-center gap-2">
-            Total {kpiLoading && <Loader2 className="w-3 h-3 animate-spin text-[#F7931E]" />}
-          </div>
-          <div className="text-3xl font-title text-[#F7931E]">{kpi.total}</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#E94E1B" }}>
-          <div className="text-sm text-gray-600">Abiertos</div>
-          <div className="text-3xl font-title text-[#E94E1B]">{kpi.abiertos}</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#6DA544" }}>
-          <div className="text-sm text-gray-600">Cerrados</div>
-          <div className="text-3xl font-title text-[#6DA544]">{kpi.cerrados}</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow border-l-4" style={{ borderLeftColor: "#004E66" }}>
-          <div className="text-sm text-gray-600">Tiempo prom. cierre</div>
-          <div className="text-2xl font-title text-[#004E66]">
-            {kpi.avg_resolucion_horas !== null
-              ? `${Number(kpi.avg_resolucion_horas).toFixed(1)} h`
-              : "—"}
-          </div>
-        </div>
-      </div>
+      </section>
 
       {showStats && (
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-title text-lg text-[#004E66]">Distribución por Departamento</h3>
-            <div className="text-sm text-gray-500 flex items-center gap-2">
-              {distLoading && <Loader2 className="w-4 h-4 animate-spin text-[#018B9C]" />} Actualizado automáticamente
-            </div>
-          </div>
-          {distStats.length > 0 ? (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {distStats.map((item, idx) => (
-                <div
-                  key={`${item.depto}-${idx}`}
-                  className="bg-white p-4 rounded-lg shadow border-l-4"
-                  style={{ borderLeftColor: "#F7931E" }}
-                >
-                  <div className="text-sm text-gray-600">{item.depto}</div>
-                  <div className="text-2xl font-title text-[#F7931E]">
-                    {Number(item.porc).toFixed(1)}%
-                  </div>
-                </div>
-              ))}
+        <section className="bg-white rounded-lg shadow p-4">
+          <div className="font-semibold text-[#004E66] mb-2">Distribución</div>
+          {distLoading ? (
+            <div className="text-sm text-gray-600 inline-flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Cargando…
             </div>
           ) : (
-            <div className="p-4 bg-white rounded border text-gray-600">
-              No hay datos para los filtros seleccionados.
-            </div>
+            <ul className="text-sm text-gray-700 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {(distStats || []).map((row, idx) => (
+                <li key={idx} className="flex items-center justify-between border rounded px-3 py-2">
+                  <span className="truncate">{row?.label || row?.name || "—"}</span>
+                  <span className="font-semibold">{row?.count ?? 0}</span>
+                </li>
+              ))}
+            </ul>
           )}
-        </div>
+        </section>
       )}
 
-      <div className="mb-4">
-        <button
-          onClick={() => setShowStats(!showStats)}
-          className={`px-4 py-2 rounded-lg font-medium transition-all ${
-            showStats
-              ? "bg-[#F7931E] text-white shadow"
-              : "bg-[#E8E3D3] text-[#7a4a05] hover:bg-[#E8E3D3]/80"
-          }`}
-        >
-          <TrendingUp className="inline w-5 h-5 mr-2" />
-          {showStats ? "Ocultar" : "Mostrar"} distribución
-        </button>
-      </div>
-
-      {loadError ? (
-        <div className="text-center py-6 bg-[#ffe9e3] border border-[#ffd3c8] rounded-lg text-[#7a200f]">
-          {loadError}
-        </div>
-      ) : filteredTickets.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-lg shadow">
-          <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-600 text-lg">
-            No hay fichas {statusFilter === "0" ? "abiertas" : "cerradas"} con los filtros seleccionados.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {filteredTickets.map((ticket) => (
-            <TicketCard key={ticket.id} ticket={ticket} onOpenFollowup={onOpenFollowup} />
+      <section className="bg-transparent">
+        <ul className="flex flex-col gap-4">
+          {(tickets || []).map((t) => (
+            <li key={t.id} className="w-full">
+              <TicketCard
+                ticket={t}
+                institutionalProfiles={institutionalProfiles}
+                onOpenFollowup={onOpenFollowup}
+              />
+            </li>
           ))}
-        </div>
-      )}
+        </ul>
+        {(!tickets || tickets.length === 0) && (
+          <div className="text-center text-sm text-gray-600 mt-2">
+            No hay fichas para los filtros seleccionados.
+          </div>
+        )}
+      </section>
     </div>
   );
 }

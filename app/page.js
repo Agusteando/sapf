@@ -936,6 +936,7 @@ export default function ParentAttentionSystem() {
             lastLoadedAt={dashLastLoadedAt}
             loadError={dashLoadError}
             onOpenFollowup={onOpenFollowup}
+            institutionalProfiles={institutionalProfiles}
           />
         )}
 
