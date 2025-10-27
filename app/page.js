@@ -85,7 +85,7 @@ export default function ParentAttentionSystem() {
 
   const [duplicate, setDuplicate] = useState(null);
 
-  // Profiles include name and photoUrl. We derive names for bw-compat with older helpers.
+  // Profiles include full Directory name and photoUrl
   const [institutionalProfiles, setInstitutionalProfiles] = useState({});
   const institutionalNames = useMemo(() => {
     const map = {};
@@ -185,7 +185,6 @@ export default function ParentAttentionSystem() {
         if (data?.ok && data?.profiles && typeof data.profiles === "object") {
           setInstitutionalProfiles(data.profiles);
         } else if (data?.names && typeof data.names === "object") {
-          // Backward-only names (no photos)
           const fallback = {};
           for (const [email, name] of Object.entries(data.names)) {
             fallback[email] = { name, photoUrl: data.photos?.[email] || "" };
@@ -357,16 +356,16 @@ export default function ParentAttentionSystem() {
         if (r?.email) {
           const e = String(r.email).toLowerCase();
           const prof = institutionalProfiles[e] || {};
-          const name = r.email_display_name || prof.name || "";
+          const fullName = r.email_display_name || prof.name || "";
           const photoUrl = r.email_photo_url || prof.photoUrl || "";
-          list.push({ email: r.email, name, photoUrl });
+          list.push({ email: r.email, name: fullName, photoUrl });
         }
         if (r?.supervisor_email) {
           const e2 = String(r.supervisor_email).toLowerCase();
           const prof2 = institutionalProfiles[e2] || {};
-          const name2 = r.supervisor_display_name || prof2.name || "";
+          const fullName2 = r.supervisor_display_name || prof2.name || "";
           const photoUrl2 = r.supervisor_photo_url || prof2.photoUrl || "";
-          list.push({ email: r.supervisor_email, name: name2, photoUrl: photoUrl2 });
+          list.push({ email: r.supervisor_email, name: fullName2, photoUrl: photoUrl2 });
         }
       }
     }
@@ -725,6 +724,28 @@ export default function ParentAttentionSystem() {
       } catch (e) {
         console.error("[DepartmentManager] updateDepartment error", e);
         toastError("Error de red al guardar el departamento");
+      }
+    });
+  }
+
+  async function deleteDepartment(department_name) {
+    await trackAsync(async () => {
+      try {
+        const res = await fetch(`/api/departments/${selectedCampus}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json", "x-client": "sapf-app" },
+          body: JSON.stringify({ department_name }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          toastError(data?.error || "No se pudo eliminar el departamento");
+          return;
+        }
+        await fetchDepartments();
+        toastSuccess("Departamento eliminado.");
+      } catch (e) {
+        console.error("[DepartmentManager] deleteDepartment error", e);
+        toastError("Error de red al eliminar el departamento");
       }
     });
   }
@@ -1098,11 +1119,18 @@ export default function ParentAttentionSystem() {
                   getOptionLabel={(opt) => opt.label}
                   getOptionValue={(opt) => opt.value}
                   renderOption={(opt) => (
-                    <div className="flex flex-col">
-                      <span className="font-medium text-gray-900">{opt.label}</span>
-                      {opt.combined && (
-                        <span className="text-xs text-gray-500 mt-0.5">{opt.combined}</span>
-                      )}
+                    <div className="flex items-center gap-3">
+                      {opt.photoUrl ? (
+                        <img src={opt.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover" loading="lazy" />
+                      ) : null}
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-medium text-gray-900 truncate">{opt.label}</span>
+                        {opt.email ? (
+                          <span className="text-xs text-gray-600 truncate">
+                            {opt.name || "—"} {opt.email ? ` <${opt.email}>` : ""}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                 />
@@ -1179,6 +1207,8 @@ export default function ParentAttentionSystem() {
             editingDept={editingDept}
             setEditingDept={setEditingDept}
             onUpdateDepartment={updateDepartment}
+            onDeleteDepartment={deleteDepartment}
+            onCreateDepartment={updateDepartment}
           />
         )}
 

@@ -33,7 +33,7 @@ export async function GET(request, context = { params: {} }) {
       console.log("[api/departments][GET] injected fallback department 'Enfermería' for campus:", campus);
     }
 
-    // Resolve display names and photos for all present emails (service account + cache)
+    // Resolve display names and photos for all present emails
     const emails = [];
     for (const r of list) {
       if (r.email) emails.push(String(r.email).toLowerCase());
@@ -41,30 +41,26 @@ export async function GET(request, context = { params: {} }) {
     }
     const profiles = await getDisplayProfiles(emails);
 
-    // Combine to a user-friendly label "Full Name <email>" when available
-    function combinedLabel(email, fallbackName = "") {
-      const e = String(email || "").trim();
-      const key = e.toLowerCase();
-      const name = String((profiles[key]?.name) || fallbackName || "").trim();
-      if (e && name) return `${name} <${e}>`;
-      return e; // if no name, at least return email
-    }
-
+    // Build enriched response using the exact Directory fullName
     const enriched = list.map((r) => {
       const email = r.email ? String(r.email).trim() : "";
       const sup = r.supervisor_email ? String(r.supervisor_email).trim() : "";
-      const edn = profiles[email.toLowerCase()]?.name || "";
-      const sdn = profiles[sup.toLowerCase()]?.name || "";
-      const ephoto = profiles[email.toLowerCase()]?.photoUrl || "";
-      const sphoto = profiles[sup.toLowerCase()]?.photoUrl || "";
+      const emailKey = email.toLowerCase();
+      const supKey = sup.toLowerCase();
+
+      const fullName = profiles[emailKey]?.name || ""; // Directory fullName
+      const supFullName = profiles[supKey]?.name || "";
+      const photo = profiles[emailKey]?.photoUrl || "";
+      const supPhoto = profiles[supKey]?.photoUrl || "";
+
       return {
         ...r,
-        email_display_name: edn,
-        supervisor_display_name: sdn,
-        email_photo_url: ephoto,
-        supervisor_photo_url: sphoto,
-        email_combined_label: combinedLabel(email, edn || r.email_display_name || ""),
-        supervisor_combined_label: combinedLabel(sup, sdn || r.supervisor_display_name || ""),
+        email_display_name: fullName, // ensure fullName is forwarded
+        supervisor_display_name: supFullName,
+        email_photo_url: photo,
+        supervisor_photo_url: supPhoto,
+        email_combined_label: fullName && email ? `${fullName} <${email}>` : email,
+        supervisor_combined_label: supFullName && sup ? `${supFullName} <${sup}>` : sup,
       };
     });
 
@@ -111,6 +107,43 @@ export async function PUT(request, context = { params: {} }) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("[api/departments][PUT] error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request, context = { params: {} }) {
+  const params = await context.params;
+  try {
+    const campus = params.campus;
+    const body = await request.json().catch(() => ({}));
+    const department_name = String(body?.department_name || "").trim();
+
+    console.log("[api/departments][DELETE] campus:", campus, "department:", department_name);
+
+    if (!department_name) {
+      return NextResponse.json({ error: "department_name es requerido" }, { status: 400 });
+    }
+
+    if (department_name.toLowerCase() === "enfermería") {
+      return NextResponse.json({ error: "No se puede eliminar el departamento 'Enfermería'." }, { status: 400 });
+    }
+
+    const connection = await getConnection();
+    const [resDel] = await connection.execute(
+      "DELETE FROM deptos_map WHERE campus = ? AND department_name = ?",
+      [campus, department_name]
+    );
+
+    const affected = Number(resDel?.affectedRows || 0);
+    console.log("[api/departments][DELETE] affectedRows:", affected);
+
+    if (affected === 0) {
+      return NextResponse.json({ error: "Departamento no encontrado." }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true, removed: { campus, department_name } });
+  } catch (error) {
+    console.error("[api/departments][DELETE] error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

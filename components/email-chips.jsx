@@ -4,15 +4,8 @@
 import { useMemo, useRef, useState, useEffect } from "react";
 import { X, Plus, Search } from "lucide-react";
 
-function normalizeEmail(e) {
+function nrm(e) {
   return String(e || "").trim().toLowerCase();
-}
-
-function combined(email, name) {
-  const e = String(email || "").trim();
-  const n = String(name || "").trim();
-  if (e && n) return `${n} <${e}>`;
-  return e || "";
 }
 
 function Chip({ email, name, photoUrl, onRemove }) {
@@ -22,13 +15,13 @@ function Chip({ email, name, photoUrl, onRemove }) {
         <img src={photoUrl} alt="" className="h-5 w-5 rounded-full object-cover" loading="lazy" />
       ) : (
         <span className="h-5 w-5 rounded-full bg-white/70 flex items-center justify-center text-[10px] font-semibold">
-          {String(name || email || "")
-            .trim()
-            .slice(0, 2)
-            .toUpperCase()}
+          {String(name || email || "").trim().slice(0, 2).toUpperCase()}
         </span>
       )}
-      <span className="max-w-[50vw] sm:max-w-[24rem] truncate">{combined(email, name)}</span>
+      <span className="max-w-[50vw] sm:max-w-[24rem] truncate">
+        <span className="font-medium">{name || "—"}</span>
+        <span className="text-gray-600">{email ? ` <${email}>` : ""}</span>
+      </span>
       <button
         onClick={onRemove}
         aria-label="Quitar"
@@ -49,7 +42,7 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
   const suggestionMap = useMemo(() => {
     const m = new Map();
     for (const s of suggestions) {
-      const email = normalizeEmail(s.email);
+      const email = nrm(s.email);
       if (!email) continue;
       if (!m.has(email)) {
         m.set(email, { email, name: s.name || "", photoUrl: s.photoUrl || "" });
@@ -60,7 +53,7 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
 
   const selected = useMemo(() => {
     return (Array.isArray(value) ? value : []).map((email) => {
-      const e = normalizeEmail(email);
+      const e = nrm(email);
       const sug = suggestionMap.get(e);
       return {
         email,
@@ -72,14 +65,12 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    const selSet = new Set((Array.isArray(value) ? value : []).map((v) => normalizeEmail(v)));
+    const selSet = new Set((Array.isArray(value) ? value : []).map((v) => nrm(v)));
     const arr = Array.from(suggestionMap.values());
-    if (!term) {
-      return arr.filter((s) => !selSet.has(normalizeEmail(s.email))).slice(0, 8);
-    }
+    if (!term) return arr.filter((s) => !selSet.has(nrm(s.email))).slice(0, 8);
     return arr
       .filter((s) => {
-        if (selSet.has(normalizeEmail(s.email))) return false;
+        if (selSet.has(nrm(s.email))) return false;
         const hay = `${s.email} ${s.name}`.toLowerCase();
         return hay.includes(term);
       })
@@ -87,12 +78,11 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
   }, [q, suggestionMap, value]);
 
   function addEmail(email) {
-    const e = normalizeEmail(email);
+    const e = nrm(email);
     if (!e) return;
-    const set = new Set(Array.isArray(value) ? value.map(normalizeEmail) : []);
+    const set = new Set(Array.isArray(value) ? value.map(nrm) : []);
     if (set.has(e)) return;
-    const next = [...(Array.isArray(value) ? value : []), e];
-    onChange && onChange(next);
+    onChange && onChange([...(Array.isArray(value) ? value : []), e]);
     setQ("");
     setOpen(false);
     inputRef.current?.focus();
@@ -102,7 +92,6 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
     if (e.key === "Enter") {
       e.preventDefault();
       if (filtered.length > 0 && q.trim()) {
-        // Add first filtered suggestion if it matches
         addEmail(filtered[0].email);
       } else if (q.includes("@")) {
         addEmail(q.trim());
@@ -136,7 +125,7 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
             name={s.name}
             photoUrl={s.photoUrl}
             onRemove={() => {
-              const next = (Array.isArray(value) ? value : []).filter((v) => normalizeEmail(v) !== normalizeEmail(s.email));
+              const next = (Array.isArray(value) ? value : []).filter((v) => nrm(v) !== nrm(s.email));
               onChange && onChange(next);
             }}
           />
@@ -183,15 +172,12 @@ export default function EmailChips({ value = [], onChange, suggestions = [] }) {
                     <img src={s.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover" loading="lazy" />
                   ) : (
                     <div className="h-8 w-8 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center text-xs font-semibold">
-                      {String(s.name || s.email || "")
-                        .trim()
-                        .slice(0, 2)
-                        .toUpperCase()}
+                      {String(s.name || s.email || "").trim().slice(0, 2).toUpperCase()}
                     </div>
                   )}
                   <div className="min-w-0 text-left">
-                    <div className="text-sm text-gray-900 truncate">{s.name || s.email}</div>
-                    <div className="text-xs text-gray-500 truncate">{combined(s.email, s.name)}</div>
+                    <div className="text-sm text-gray-900 truncate">{s.name || "—"}</div>
+                    <div className="text-xs text-gray-500 truncate">{s.email}</div>
                   </div>
                   <Plus className="ml-auto h-4 w-4 text-[#004E66]" />
                 </button>
