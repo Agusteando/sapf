@@ -22,6 +22,7 @@ import TicketCard from "@/components/ticket-card";
 import FollowupForm from "@/components/followup-form";
 import { departmentOptions, combinedEmailLabel } from "@/lib/ui";
 import { toastError, toastSuccess, toastWarning, toastInfo } from "@/lib/notify";
+import { CAMPUS_MAP } from "@/lib/campus";
 
 export default function ParentAttentionSystem() {
   useEffect(() => {
@@ -105,6 +106,16 @@ export default function ParentAttentionSystem() {
   const [distStats, setDistStats] = useState([]);
   const [distLoading, setDistLoading] = useState(false);
 
+  // Compute campus list from canonical map to avoid duplication
+  const campusList = useMemo(() => {
+    return Object.entries(CAMPUS_MAP).map(([value, label]) => ({ value, label }));
+  }, []);
+
+  function findCampusLabel(code) {
+    const item = campusList.find((c) => c.value === code);
+    return item ? item.label : code || "";
+    }
+
   // Load profile to set initial campus & origin department
   useEffect(() => {
     let mounted = true;
@@ -116,13 +127,16 @@ export default function ParentAttentionSystem() {
         if (!mounted) return;
         const prefCampus = data?.preference?.campus || data?.detected?.campus || "";
         const prefDept = data?.preference?.department_name || data?.detected?.department_name || "";
-        setSelectedCampus(prefCampus || "PMB");
+        // Default to first canonical campus if none detected
+        const defaultCampus = prefCampus || (campusList[0]?.value || "PM");
+        setSelectedCampus(defaultCampus);
         setFormData((prev) => ({
           ...prev,
           selectedDepartment: prev.selectedDepartment || prefDept || "",
         }));
       } catch {
-        setSelectedCampus((c) => c || "PMB");
+        // Default to first canonical campus if available
+        setSelectedCampus((c) => c || (campusList[0]?.value || "PM"));
       }
     })();
     function handleProfileUpdate(e) {
@@ -136,18 +150,7 @@ export default function ParentAttentionSystem() {
       mounted = false;
       window.removeEventListener("sapf:profile-updated", handleProfileUpdate);
     };
-  }, []);
-
-  const campuses = useMemo(() => ([
-    { value: "PMB", label: "Primaria Baja Metepec" },
-    { value: "PMA", label: "Primaria Alta Metepec" },
-    { value: "PT", label: "Primaria Toluca" },
-    { value: "SM", label: "Secundaria Metepec" },
-    { value: "ST", label: "Secundaria Toluca" },
-    { value: "CM", label: "Casita Metepec" },
-    { value: "CT", label: "Casita Toluca" },
-    { value: "DM", label: "Desarrollo Metepec" },
-  ]), []);
+  }, [campusList]);
 
   const fallbackDepartmentOptions = [
     "Administración",
@@ -580,8 +583,8 @@ export default function ParentAttentionSystem() {
             appointment_date: formData.noAppointment ? null : formData.appointmentDate,
             target_department: formData.targetDepartment,
             department_email: departmentEmail,
-            created_by: "Current User",
-            original_department: formData.selectedDepartment || "General",
+            created_by: "", // server will use session identity when available
+            original_department: formData.selectedDepartment || "",
             status: formData.status,
             cc_emails: formData.ccEmails
           }),
@@ -781,8 +784,8 @@ export default function ParentAttentionSystem() {
           appointment_date: null,
           target_department: "",
           department_email: "",
-          created_by: "Enfermería",
-          original_department: "Reporte de Enfermería",
+          created_by: "",
+          original_department: "", // server will infer from session mapping if available
           status: "1"
         })
       });
@@ -944,7 +947,7 @@ export default function ParentAttentionSystem() {
           <div className="bg-white p-6 rounded-lg shadow-lg">
             <div className="flex items-center justify-between mb-6">
               <h2 className="font-title text-2xl text-[#004E66]">
-                Nueva Ficha {selectedCampus ? `— ${campuses.find((c) => c.value === selectedCampus)?.label}` : ""}
+                Nueva Ficha {selectedCampus ? `— ${findCampusLabel(selectedCampus)}` : ""}
               </h2>
               {formData.studentPhotoUrl ? (
                 <div className="relative w-16 h-16 rounded-full ring-4 ring-[#F7931E] overflow-hidden">
@@ -1202,7 +1205,7 @@ export default function ParentAttentionSystem() {
 
         {currentView === "departments" && selectedCampus && (
           <DepartmentManager
-            campusLabel={campuses.find((c) => c.value === selectedCampus)?.label}
+            campusLabel={findCampusLabel(selectedCampus)}
             departments={departments}
             institutionalProfiles={institutionalProfiles}
             editingDept={editingDept}
@@ -1215,7 +1218,7 @@ export default function ParentAttentionSystem() {
 
         {currentView === "nursing" && selectedCampus && (
           <NursingReport
-            selectedCampusLabel={campuses.find((c) => c.value === selectedCampus)?.label}
+            selectedCampusLabel={findCampusLabel(selectedCampus)}
             students={students}
             onStudentSelected={onNursingStudentSelected}
             onSubmit={onSubmitNursingReport}

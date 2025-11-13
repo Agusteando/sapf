@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getConnection } from "@/lib/db";
 import { buildNormalizedCampusClause, buildOriginExpr, buildPriorityExpr } from "@/lib/schema";
 import { wrapCache, getCache } from "@/lib/cache";
+import { verifySessionValue, SESSION_COOKIE_NAME } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,6 +101,22 @@ async function emailDepartment({ campus, deptName, subject, html, extraCc = [] }
   } catch (e) {
     console.warn("[api/tickets] emailDepartment error:", e?.message || e);
   }
+}
+
+// Minimal cookie parser for server routes
+function parseCookie(header) {
+  const out = {};
+  if (!header) return out;
+  const parts = header.split(";");
+  for (const p of parts) {
+    const idx = p.indexOf("=");
+    if (idx > -1) {
+      const k = p.slice(0, idx).trim();
+      const v = p.slice(idx + 1).trim();
+      out[k] = decodeURIComponent(v);
+    }
+  }
+  return out;
 }
 
 export async function GET(request, context = { params: {} }) {
@@ -256,6 +273,14 @@ export async function POST(request, context = { params: {} }) {
       cc_emails
     } = await request.json();
 
+    // Resolve actor from session to default origin department when not provided
+    const cookieHeader = request.headers.get("cookie") || "";
+    const cookies = parseCookie(cookieHeader);
+    const sessionRaw = cookies[SESSION_COOKIE_NAME];
+    const session = verifySessionValue(sessionRaw);
+    const actorEmail = session?.email || "";
+    const actorName = session?.name || "";
+
     const pool = await getConnection();
 
     console.log("[api/tickets][POST] creating ticket with:", {
@@ -268,8 +293,33 @@ export async function POST(request, context = { params: {} }) {
       original_department,
       has_appointment: Boolean(appointment_date),
       status,
-      cc_count: Array.isArray(cc_emails) ? cc_emails.length : 0
+      cc_count: Array.isArray(cc_emails) ? cc_emails.length : 0,
+      actorEmailKnown: !!actorEmail
     });
+
+    // Server-side default: if no original_department provided, infer from deptos_map for the actor on this campus
+    let originDeptFinal = String(original_department || "").trim();
+    if (!originDeptFinal && actorEmail && campus) {
+      try {
+        const [rows] = await pool.execute(
+          `SELECT department_name 
+             FROM deptos_map 
+            WHERE campus = ? 
+              AND (LOWER(TRIM(email)) = LOWER(TRIM(?)) OR LOWER(TRIM(supervisor_email)) = LOWER(TRIM(?)))
+            LIMIT 1`,
+          [campus, actorEmail, actorEmail]
+        );
+        const inferred = rows?.[0]?.department_name || "";
+        if (inferred) {
+          originDeptFinal = inferred;
+          console.log("[api/tickets][POST] origin department inferred from deptos_map:", inferred);
+        } else {
+          console.log("[api/tickets][POST] no dept mapping found; leaving origin department as provided or empty.");
+        }
+      } catch (e) {
+        console.warn("[api/tickets][POST] deptos_map lookup failed:", e?.message || e);
+      }
+    }
 
     // Insert ticket, persisting both school_code (preferred) and campus for legacy compatibility
     const [result] = await pool.execute(
@@ -311,9 +361,10 @@ export async function POST(request, context = { params: {} }) {
         student_name,
         phone_number,
         parent_email,
-        campus, // school_code
-        created_by || "",
-        original_department || "",
+        campus, // school_code (canonical code)
+        // Prefer session identity; fallback to provided created_by
+        actorEmail || created_by || "",
+        originDeptFinal || original_department || ""
       ]
     );
 
@@ -376,7 +427,7 @@ export async function POST(request, context = { params: {} }) {
         studentName: student_name,
         reason,
         resolution,
-        createdBy: created_by || "",
+        createdBy: actorName || actorEmail || created_by || "",
         contactMethod: contact_method || "",
         appointmentDate: appointment_date || null
       });
