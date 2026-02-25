@@ -18,15 +18,15 @@ jobs:
         with:
           node-version: "20.19.0"
 
-      - name: Deploy (git pull/reset, preserve uploads)
+      - name: Deploy (git pull/reset, preserve env + credentials)
         env:
           REPO_URL: https://github.com/Agusteando/sapf.git
           BRANCH: main
         run: |
           $ErrorActionPreference = "Stop"
 
-          $TARGET  = "C:\Server\htdocs\sapf-nextjs"
-          $BRANCH  = $env:BRANCH
+          $TARGET   = "C:\Server\htdocs\sapf-nextjs"
+          $BRANCH   = $env:BRANCH
           $REPO_URL = $env:REPO_URL
 
           if (!(Test-Path $TARGET)) {
@@ -36,7 +36,7 @@ jobs:
           Set-Location $TARGET
 
           if (!(Test-Path (Join-Path $TARGET ".git"))) {
-            throw "Missing .git in $TARGET. Refusing to init/clone automatically to protect existing uploads."
+            throw "Missing .git in $TARGET. Refusing to init/clone automatically."
           }
 
           git config --global --add safe.directory $TARGET | Out-Null
@@ -49,10 +49,31 @@ jobs:
             git remote set-url origin $REPO_URL
           }
 
-          # Update to latest commit (keeps untracked uploads)
+          # --- Backup local secrets before hard reset ---
+          $BACKUP_DIR = Join-Path $env:TEMP ("deploy_backup_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+          New-Item -ItemType Directory -Force -Path $BACKUP_DIR | Out-Null
+
+          $ENV_FILE  = Join-Path $TARGET ".env.local"
+          $CREDS_FILE = Join-Path $TARGET "credentials.json"
+
+          if (Test-Path $ENV_FILE)   { Copy-Item -Force $ENV_FILE  (Join-Path $BACKUP_DIR ".env.local") }
+          if (Test-Path $CREDS_FILE) { Copy-Item -Force $CREDS_FILE (Join-Path $BACKUP_DIR "credentials.json") }
+
+          # Update to latest commit
           git fetch origin --prune
           git checkout -B $BRANCH origin/$BRANCH --force
           git reset --hard origin/$BRANCH
+
+          # --- Restore local secrets after hard reset ---
+          $ENV_BAK   = Join-Path $BACKUP_DIR ".env.local"
+          $CREDS_BAK = Join-Path $BACKUP_DIR "credentials.json"
+
+          if (Test-Path $ENV_BAK)   { Copy-Item -Force $ENV_BAK   $ENV_FILE }
+          if (Test-Path $CREDS_BAK) { Copy-Item -Force $CREDS_BAK $CREDS_FILE }
+
+          # Optional: make sure git won't ever try to track these if they appear
+          git update-index --skip-worktree .env.local 2>$null | Out-Null
+          git update-index --skip-worktree credentials.json 2>$null | Out-Null
 
           # Stop app if running
           pm2 delete sapf -s 2>$null
