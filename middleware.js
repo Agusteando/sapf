@@ -1,4 +1,4 @@
-
+// middleware.js
 import { NextResponse } from "next/server";
 
 const SESSION_COOKIE_NAME = "sapf_session";
@@ -86,9 +86,10 @@ export async function middleware(request) {
   const url = request.nextUrl;
   const path = url.pathname;
 
-  // Allow auth endpoints and static assets without session
+  // Allow auth endpoints, healthcheck and static assets without session
   const isAuthEndpoint = path.startsWith("/api/auth/");
   const isLoginPage = path === "/login";
+  const isHealth = path === "/api/health";
   const isStatic =
     path.startsWith("/_next/") ||
     path === "/favicon.ico" ||
@@ -101,9 +102,10 @@ export async function middleware(request) {
     path.endsWith(".svg") ||
     path.endsWith(".ico") ||
     path.endsWith(".txt") ||
-    path.endsWith(".xml");
+    path.endsWith(".xml") ||
+    path.endsWith(".html");
 
-  if (isStatic || isAuthEndpoint) {
+  if (isStatic || isAuthEndpoint || isHealth) {
     return NextResponse.next();
   }
 

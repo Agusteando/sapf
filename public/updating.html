@@ -1,0 +1,96 @@
+<!-- public/updating.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Actualizando Sistema | SAPF</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Montserrat:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Montserrat', sans-serif; }
+        h1, h2 { font-family: 'Fredoka', sans-serif; }
+        .gradient-bg { background: linear-gradient(135deg, #004E66, #018B9C); }
+        
+        .pulse-ring {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .5; transform: scale(1.05); }
+        }
+    </style>
+</head>
+<body class="min-h-screen gradient-bg flex items-center justify-center p-4 relative overflow-hidden">
+    <!-- Decoración de fondo -->
+    <div class="absolute -top-32 -right-24 w-[60vw] h-[60vw] rounded-full bg-[#F7931E] blur-[120px] opacity-30 pointer-events-none"></div>
+    <div class="absolute -bottom-24 -left-24 w-[55vw] h-[55vw] rounded-full bg-[#6DA544] blur-[120px] opacity-30 pointer-events-none"></div>
+
+    <div class="relative z-10 w-full max-w-lg bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-[#cde6eb] p-8 sm:p-12 text-center">
+        
+        <div class="flex justify-center mb-6">
+            <div class="relative w-24 h-24 bg-[#E6F3F6] rounded-full flex items-center justify-center pulse-ring shadow-inner">
+                <svg xmlns="http://www.w3.org/-svg" class="w-12 h-12 text-[#004E66]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </div>
+        </div>
+
+        <h1 class="text-3xl text-[#004E66] font-semibold mb-3">Actualizando Sistema</h1>
+        <p class="text-gray-600 mb-8 leading-relaxed">
+            Estamos implementando nuevas mejoras en la plataforma para brindarte una mejor experiencia. El sistema estará disponible en breve.
+        </p>
+
+        <div class="bg-gray-50 rounded-2xl p-6 border border-gray-200">
+            <p class="text-xs text-gray-500 uppercase tracking-wider font-bold mb-2">Tiempo máximo estimado</p>
+            <div id="timer" class="text-5xl font-title text-[#F7931E] tracking-tight">
+                15:00
+            </div>
+            <p class="text-sm text-gray-400 mt-2">Esta página se actualizará automáticamente.</p>
+        </div>
+
+        <div class="mt-8 flex items-center justify-center gap-2 text-sm text-[#6DA544] font-medium">
+            <svg class="w-5 h-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Trabajando en el servidor...
+        </div>
+    </div>
+
+    <script>
+        // 1. Contador visual (15 Minutos)
+        let timeLeft = 15 * 60; 
+        const timerEl = document.getElementById('timer');
+
+        function updateTimer() {
+            const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+            const s = (timeLeft % 60).toString().padStart(2, '0');
+            timerEl.textContent = `${m}:${s}`;
+            if (timeLeft > 0) timeLeft--;
+        }
+
+        setInterval(updateTimer, 1000);
+        updateTimer();
+
+        // 2. Polling inteligente: Pregunta cada 3 segundos si Next.js ya levantó
+        async function checkHealth() {
+            try {
+                // Al levantar PM2, esta ruta devolverá 200 OK
+                const res = await fetch('/api/health');
+                if (res.ok) {
+                    // El sistema regresó, recargamos la página donde el usuario intentaba estar
+                    window.location.reload();
+                }
+            } catch (error) {
+                // Sigue caído (502 de IIS o fetch error), seguimos esperando pacientemente.
+            }
+        }
+
+        // Comenzamos a preguntar después de 5 segundos para no saturar 
+        setTimeout(() => {
+            setInterval(checkHealth, 3000);
+        }, 5000);
+    </script>
+</body>
+</html>
