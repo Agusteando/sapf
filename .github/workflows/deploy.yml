@@ -1,0 +1,86 @@
+name: Deploy to Windows Server
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+
+      - name: Deploy (git pull/reset, preserve uploads)
+        env:
+          REPO_URL: https://github.com/Agusteando/sapf.git
+          BRANCH: main
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $TARGET  = "C:\Server\htdocs\sapf-nextjs"
+          $BRANCH  = $env:BRANCH
+          $REPO_URL = $env:REPO_URL
+
+          if (!(Test-Path $TARGET)) {
+            New-Item -ItemType Directory -Force -Path $TARGET | Out-Null
+          }
+
+          Set-Location $TARGET
+
+          if (!(Test-Path (Join-Path $TARGET ".git"))) {
+            throw "Missing .git in $TARGET. Refusing to init/clone automatically to protect existing uploads."
+          }
+
+          git config --global --add safe.directory $TARGET | Out-Null
+
+          # Ensure origin is correct
+          $originUrl = git remote get-url origin 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            git remote add origin $REPO_URL
+          } elseif ($originUrl -ne $REPO_URL) {
+            git remote set-url origin $REPO_URL
+          }
+
+          # Update to latest commit (keeps untracked uploads)
+          git fetch origin --prune
+          git checkout -B $BRANCH origin/$BRANCH --force
+          git reset --hard origin/$BRANCH
+
+          # Stop app if running
+          pm2 delete sapf -s 2>$null
+
+          # Build + prune dev deps
+          npm ci
+          npx nuxi cleanup
+          npm run build
+          npm prune --omit=dev
+
+          # Start app
+          pm2 start process.yml
+          pm2 save
+
+          # Health check
+          Start-Sleep -Seconds 5
+          node -e @"
+          try {
+            const { execSync } = require('child_process');
+            const list = JSON.parse(execSync('pm2 jlist', { stdio: ['ignore','pipe','pipe'] }).toString());
+            const app = list.find(p => p && p.name === 'sapf');
+            if (!app) process.exit(10);
+            if (!app.pm2_env || app.pm2_env.status !== 'online') process.exit(11);
+            console.log('App is ONLINE');
+          } catch (e) { process.exit(12); }
+          "@
+
+          if ($LASTEXITCODE -ne 0) {
+            pm2 list
+            throw "PM2 Health Check Failed. Exit Code: $LASTEXITCODE"
+          }
