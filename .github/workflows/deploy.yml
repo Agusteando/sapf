@@ -22,12 +22,14 @@ jobs:
         env:
           REPO_URL: https://github.com/Agusteando/sapf.git
           BRANCH: main
+          PM2_APP: SAPF-NEXTJS
         run: |
           $ErrorActionPreference = "Stop"
 
           $TARGET   = "C:\Server\htdocs\sapf-nextjs"
           $BRANCH   = $env:BRANCH
           $REPO_URL = $env:REPO_URL
+          $PM2_APP  = $env:PM2_APP
 
           if (!(Test-Path $TARGET)) {
             New-Item -ItemType Directory -Force -Path $TARGET | Out-Null
@@ -53,10 +55,10 @@ jobs:
           $BACKUP_DIR = Join-Path $env:TEMP ("deploy_backup_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
           New-Item -ItemType Directory -Force -Path $BACKUP_DIR | Out-Null
 
-          $ENV_FILE  = Join-Path $TARGET ".env.local"
+          $ENV_FILE   = Join-Path $TARGET ".env.local"
           $CREDS_FILE = Join-Path $TARGET "credentials.json"
 
-          if (Test-Path $ENV_FILE)   { Copy-Item -Force $ENV_FILE  (Join-Path $BACKUP_DIR ".env.local") }
+          if (Test-Path $ENV_FILE)   { Copy-Item -Force $ENV_FILE   (Join-Path $BACKUP_DIR ".env.local") }
           if (Test-Path $CREDS_FILE) { Copy-Item -Force $CREDS_FILE (Join-Path $BACKUP_DIR "credentials.json") }
 
           # Update to latest commit
@@ -76,7 +78,7 @@ jobs:
           git update-index --skip-worktree credentials.json 2>$null | Out-Null
 
           # Stop app if running
-          pm2 delete sapf -s 2>$null
+          pm2 delete $PM2_APP -s 2>$null
 
           # Build + prune dev deps
           npm ci
@@ -84,20 +86,21 @@ jobs:
           npm run build
           npm prune --omit=dev
 
-          # Start app
+          # Start app (expects process.yml defines the same app name)
           pm2 start process.yml
           pm2 save
 
-          # Health check
+          # Health check (wait, then verify app by name)
           Start-Sleep -Seconds 5
           node -e @"
           try {
             const { execSync } = require('child_process');
+            const name = process.env.PM2_APP;
             const list = JSON.parse(execSync('pm2 jlist', { stdio: ['ignore','pipe','pipe'] }).toString());
-            const app = list.find(p => p && p.name === 'sapf');
+            const app = list.find(p => p && p.name === name);
             if (!app) process.exit(10);
             if (!app.pm2_env || app.pm2_env.status !== 'online') process.exit(11);
-            console.log('App is ONLINE');
+            console.log('App is ONLINE:', name);
           } catch (e) { process.exit(12); }
           "@
 
